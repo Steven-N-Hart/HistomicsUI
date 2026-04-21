@@ -309,11 +309,10 @@ var ImageView = View.extend({
                     .setElement('.h-annotation-selector').render();
 
                 if (this.drawWidget) {
-                    this.$('.h-draw-widget').removeClass('hidden');
                     this.drawWidget
                         .setViewer(this.viewerWidget)
                         .setAnnotationSelector(this.annotationSelector)
-                        .setElement('.h-draw-widget').render();
+                        .render();
                 }
                 this._orderPanels();
             });
@@ -324,11 +323,10 @@ var ImageView = View.extend({
                 .setElement('.h-annotation-selector').render();
 
             if (this.drawWidget) {
-                this.$('.h-draw-widget').removeClass('hidden');
                 this.drawWidget
                     .setViewer(null)
                     .setAnnotationSelector(this.annotationSelector)
-                    .setElement('.h-draw-widget').render();
+                    .render();
             }
         }
         this.controlPanel.setElement('#h-analysis-panel').render();
@@ -1117,10 +1115,9 @@ var ImageView = View.extend({
             this._lastDrawingType = this.drawWidget.drawingType();
             this.drawWidget.cancelDrawMode();
             this.stopListening(this.drawWidget);
+            this.annotationSelector.setDrawWidget(null);
             this.drawWidget.remove();
             this.drawWidget = null;
-            $('<div/>').addClass('h-draw-widget s-panel hidden').attr('id', 'h-draw-panel')
-                .appendTo(this.$('#h-annotation-selector-container'));
             this._orderPanels();
         }
     },
@@ -1139,7 +1136,6 @@ var ImageView = View.extend({
                 image: this.model,
                 annotation: this.activeAnnotation,
                 drawingType: this._lastDrawingType,
-                el: this.$('.h-draw-widget'),
                 viewer: this.viewerWidget,
                 annotationSelector: this.annotationSelector
             }).render();
@@ -1152,7 +1148,7 @@ var ImageView = View.extend({
                     this.annotationSelector._debounceRender();
                 }
             });
-            this.$('.h-draw-widget').removeClass('hidden');
+            this.annotationSelector.setDrawWidget(this.drawWidget);
         }
     },
 

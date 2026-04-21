@@ -100,6 +100,7 @@ var AnnotationSelector = Panel.extend({
                 this._activeGroup = this.parentView._defaultGroup;
             }
             const groupTree = this._buildGroupTree();
+            this._groupTree = groupTree;
             if (groupTree && !this._treeInitialized) {
                 this._treeInitialized = true;
                 this._initExpandedTreeNodes(groupTree);
@@ -126,6 +127,7 @@ var AnnotationSelector = Panel.extend({
                 collapsed: this.$('.s-panel-content.collapse').length && !this.$('.s-panel-content').hasClass('in'),
                 _
             }));
+            this._attachDrawWidget();
             this._changeGlobalOpacity();
             this._changeGlobalFillOpacity();
             if (this._showAllAnnotationsState) {
@@ -174,7 +176,7 @@ var AnnotationSelector = Panel.extend({
         this.collection.fetch({itemId: this._parentId}).then(() => {
             let update;
             this.collection.each((model) => {
-                if (((model.get('annotation') || {}).display || {}).visible === true) {
+                if (((model.get('annotation') || {}).display || {}).visible !== false) {
                     model.set('displayed', true);
                     update = true;
                 }
@@ -525,7 +527,7 @@ var AnnotationSelector = Panel.extend({
             const name = node ? node.label : 'Annotations';
             const model = new AnnotationModel({
                 itemId: this.parentItem.id,
-                annotation: {name}
+                annotation: {name, display: {visible: true}}
             });
             this._norefresh = true;
             model.save().done(() => {
@@ -777,7 +779,7 @@ var AnnotationSelector = Panel.extend({
                 ? liveModels.map((e) => ({group: e.get('group')}))
                 : (model.get('annotation') || {}).elements || [];
             elems.forEach((e) => {
-                const g = e.group || '__other__';
+                const g = e.group != null ? e.group : 'Other';
                 counts[g] = (counts[g] || 0) + 1;
                 if (!annosByGroup[g]) {
                     annosByGroup[g] = [];
@@ -826,16 +828,16 @@ var AnnotationSelector = Panel.extend({
         };
         roots.forEach(rollUp);
 
-        const otherCount = counts['__other__'] || 0;
+        const otherCount = counts['Other'] || 0;
         if (otherCount > 0) {
             roots.push({
-                id: '__other__',
+                id: 'Other',
                 label: 'Other',
                 fillColor: 'rgba(150,150,150,0.2)',
                 lineColor: 'rgb(150,150,150)',
                 parent: null,
                 count: otherCount,
-                annotations: annosByGroup['__other__'] || [],
+                annotations: annosByGroup['Other'] || [],
                 children: [],
                 depth: 0
             });
@@ -864,8 +866,22 @@ var AnnotationSelector = Panel.extend({
 
     _setActiveGroup(groupId) {
         this._activeGroup = groupId;
-        this.trigger('h:setDefaultGroup', groupId);
+        this._syncDrawWidgetStyle(groupId);
         this._debounceRender();
+    },
+
+    _syncDrawWidgetStyle(groupId) {
+        if (!this._drawWidget || !this._drawWidget._groups) {
+            return;
+        }
+        if (!this._drawWidget._groups.get(groupId)) {
+            this._drawWidget._groups.add({id: groupId});
+        }
+        const style = this._drawWidget._groups.get(groupId);
+        if (groupId !== 'Other' && !style.get('group')) {
+            style.set('group', groupId);
+        }
+        this._drawWidget._setStyleGroup(style.toJSON());
     },
 
     _handleClassClick(evt) {
@@ -873,8 +889,36 @@ var AnnotationSelector = Panel.extend({
             return;
         }
         const groupId = $(evt.currentTarget).closest('.h-class-node').data('groupId');
-        if (groupId) {
-            this._setActiveGroup(groupId);
+        if (!groupId) {
+            return;
+        }
+        this._setActiveGroup(groupId);
+
+        // Find the annotation to auto-open for this class.
+        // Primary: use the loaded-element group tree (most accurate).
+        // Fallback: use server-provided 'groups' metadata on each annotation model.
+        let annotations = [];
+        if (this._groupTree) {
+            const node = this._findNodeInTree(this._groupTree, groupId);
+            if (node) {
+                annotations = node.annotations;
+            }
+        }
+        if (!annotations.length) {
+            // 'Other' represents null-group elements in the server metadata
+            const metaGroup = groupId === 'Other' ? null : groupId;
+            annotations = this.collection.filter((a) => {
+                const groups = a.get('groups') || [];
+                return groups.some((g) => g === metaGroup);
+            });
+        }
+
+        if (annotations.length) {
+            const annotation = annotations[annotations.length - 1];
+            const already = this._activeAnnotation && this._activeAnnotation.id === annotation.id;
+            if (!already) {
+                this.editAnnotation(annotation);
+            }
         }
     },
 
@@ -888,6 +932,27 @@ var AnnotationSelector = Panel.extend({
             this._expandedGroups.add(key);
         }
         this._debounceRender();
+    },
+
+    setDrawWidget(widget) {
+        this._drawWidget = widget || null;
+        this._attachDrawWidget();
+        return this;
+    },
+
+    _attachDrawWidget() {
+        const $section = this.$('.h-draw-section');
+        if (!$section.length) {
+            return;
+        }
+        $section.empty();
+        if (this._drawWidget) {
+            $section.append(this._drawWidget.el);
+            // Re-bind Backbone events: this.$el.html() above destroyed jQuery
+            // event handlers on all descendants, including DrawWidget's el.
+            this._drawWidget.delegateEvents();
+            this._drawWidget.$('.h-dropdown-content').collapse({toggle: false});
+        }
     },
 
     _openEditTaxonomyDialog() {

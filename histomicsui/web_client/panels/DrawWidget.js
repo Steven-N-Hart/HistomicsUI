@@ -24,6 +24,7 @@ import '../stylesheets/panels/drawWidget.styl';
  * annotation elements.
  */
 var DrawWidget = Panel.extend({
+    className: 'h-draw-widget',
     events: _.extend(Panel.prototype.events, {
         'click .h-edit-element': 'editElement',
         'click .h-view-element': 'viewElement',
@@ -79,8 +80,17 @@ var DrawWidget = Panel.extend({
                 this._setStyleGroup(this._groups.get(this._editOptions.style).toJSON());
             }
             const activeGroup = this.annotationSelector && this.annotationSelector._activeGroup;
-            if (activeGroup && this._groups.get(activeGroup)) {
-                this._setStyleGroup(this._groups.get(activeGroup).toJSON());
+            if (activeGroup) {
+                if (!this._groups.get(activeGroup)) {
+                    this._groups.add({id: activeGroup});
+                }
+                const activeStyle = this._groups.get(activeGroup);
+                // Named classes must have their group attribute set so drawn elements are classified.
+                // 'Other' is the null-group sentinel — leave its group attribute unset.
+                if (activeGroup !== 'Other' && !activeStyle.get('group')) {
+                    activeStyle.set('group', activeGroup);
+                }
+                this._setStyleGroup(activeStyle.toJSON());
             }
         });
         this.on('h:mouseon', (model) => {
