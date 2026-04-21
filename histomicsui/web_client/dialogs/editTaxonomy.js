@@ -56,16 +56,64 @@ const EditTaxonomyView = Backbone.View.extend({
             colorHex: rgbToHex(c.lineColor)
         }));
         const allIds = this._classes.map((c) => ({id: c.id, label: c.label || c.id}));
+
+        if (this.$('.modal').length) {
+            // Modal is already open — update only the mutable content to avoid
+            // creating a second Bootstrap backdrop (which would be orphaned on close).
+            this._updateContent(classesForTemplate, allIds);
+            return this;
+        }
+
         this.$el.html(editTaxonomyTemplate({
             classes: classesForTemplate,
             allIds,
             error: this._error
         }));
-        this.$el.find('.modal').modal('show');
-        this.$el.find('.modal').on('hidden.bs.modal', () => {
-            this.remove();
-        });
+        this.$('.modal').modal('show');
+        this.$('.modal').on('hidden.bs.modal', () => this.remove());
         return this;
+    },
+
+    _updateContent(classesForTemplate, allIds) {
+        this.$('.alert-danger').remove();
+        if (this._error) {
+            this.$('.modal-body').prepend(
+                $('<div class="alert alert-danger"></div>').text(this._error)
+            );
+        }
+
+        const $tbody = this.$('tbody');
+        $tbody.empty();
+        classesForTemplate.forEach((cls, idx) => {
+            const $select = $('<select class="form-control input-sm h-tax-parent"></select>');
+            $select.append('<option value="">— none (root class)</option>');
+            allIds.forEach((opt) => {
+                if (opt.id !== cls.id) {
+                    $('<option></option>')
+                        .val(opt.id)
+                        .text(opt.label || opt.id)
+                        .prop('selected', cls.parent === opt.id)
+                        .appendTo($select);
+                }
+            });
+
+            $('<tr class="h-tax-row"></tr>').attr('data-idx', idx).append(
+                $('<td></td>').append(
+                    $('<input class="form-control input-sm h-tax-id" type="text" placeholder="unique-id">').val(cls.id)
+                ),
+                $('<td></td>').append(
+                    $('<input class="form-control input-sm h-tax-label" type="text" placeholder="Display Name">').val(cls.label)
+                ),
+                $('<td></td>').append(
+                    $('<input class="h-tax-line-color" type="color">').val(cls.colorHex || '#000000')
+                ),
+                $('<td></td>').append($select),
+                $('<td></td>').append(
+                    $('<button class="btn btn-xs btn-danger h-tax-delete-row" type="button" title="Delete class"></button>')
+                        .append('<span class="icon-cancel"></span>')
+                )
+            ).appendTo($tbody);
+        });
     },
 
     _addRow() {
