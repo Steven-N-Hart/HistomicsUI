@@ -122,6 +122,15 @@ var ImageView = View.extend({
         this.listenTo(this.annotationSelector, 'h:groupCount', (obj) => {
             this.contextMenu.setGroupCount(obj);
         });
+        this.listenTo(this.annotationSelector, 'h:setDefaultGroup', (groupId) => {
+            this._defaultGroup = groupId;
+            if (this.drawWidget) {
+                this.drawWidget._defaultGroup = groupId;
+                if (this.drawWidget._groups && this.drawWidget._groups.get(groupId)) {
+                    this.drawWidget._setStyleGroup(this.drawWidget._groups.get(groupId).toJSON());
+                }
+            }
+        });
         this.listenTo(events, 'h:submit', (data) => {
             this.$('.s-jobs-panel .s-panel-controls .icon-down-open').click();
             events.trigger('g:alert', {type: 'success', text: 'Analysis job submitted.'});
@@ -1136,6 +1145,13 @@ var ImageView = View.extend({
             }).render();
             this.listenTo(this.drawWidget, 'h:redraw', this._redrawAnnotation);
             this.listenTo(this.drawWidget, 'h:styleGroupsUpdated', this._updatePixelmapsWithCategories);
+            this.listenTo(this.drawWidget, 'h:drawGroupChanged', (groupId) => {
+                if (this.annotationSelector) {
+                    this.annotationSelector._activeGroup = groupId;
+                    this._defaultGroup = groupId;
+                    this.annotationSelector._debounceRender();
+                }
+            });
             this.$('.h-draw-widget').removeClass('hidden');
         }
     },
@@ -1775,14 +1791,31 @@ var ImageView = View.extend({
                             while (groups.length) {
                                 groups.first().destroy();
                             }
+                        } else {
+                            const yamlIds = new Set(val.annotationGroups.groups.map((g) => g.id));
+                            groups.models.slice().forEach((model) => {
+                                if (!yamlIds.has(model.id)) {
+                                    model.destroy();
+                                }
+                            });
                         }
                         val.annotationGroups.groups.forEach((group) => {
+                            if (!group.group) {
+                                group.group = group.id;
+                            }
                             group.label = group.label ? {value: group.label} : undefined;
                             groups.add(group);
                         });
                         groups.each((model) => { model.save(); });
                     }
+                    if (this.annotationSelector) {
+                        this.annotationSelector._treeInitialized = false;
+                        this.annotationSelector._debounceRender();
+                    }
                 });
+            } else if (this.annotationSelector) {
+                this.annotationSelector._treeInitialized = false;
+                this.annotationSelector._debounceRender();
             }
         });
     },

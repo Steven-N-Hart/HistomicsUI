@@ -11,6 +11,7 @@ import {events as girderEvents} from '@girder/core';
 
 import events from '../events';
 import showSaveAnnotationDialog from '../dialogs/saveAnnotation';
+import showEditTaxonomyDialog from '../dialogs/editTaxonomy';
 
 import annotationSelectorWidget from '../templates/panels/annotationSelector.pug';
 import '../stylesheets/panels/annotationSelector.styl';
@@ -35,7 +36,10 @@ var AnnotationSelector = Panel.extend({
         'input #h-annotation-opacity': '_changeGlobalOpacity',
         'input #h-annotation-fill-opacity': '_changeGlobalFillOpacity',
         'click .h-annotation-select-by-region': 'selectAnnotationByRegion',
-        'click .h-annotation-group-name': '_toggleExpandGroup'
+        'click .h-annotation-group-name': '_toggleExpandGroup',
+        'click .h-class-header': '_handleClassClick',
+        'click .h-class-tree-toggle': '_toggleTreeNode',
+        'click .h-edit-taxonomy': '_openEditTaxonomyDialog'
     }),
 
     /**
@@ -48,6 +52,7 @@ var AnnotationSelector = Panel.extend({
      */
     initialize(settings = {}) {
         this._expandedGroups = new Set();
+        this._activeGroup = null;
         this._opacity = settings.opacity || 0.9;
         this._fillOpacity = settings.fillOpacity || 1.0;
         this._showAllAnnotationsState = false;
@@ -91,10 +96,21 @@ var AnnotationSelector = Panel.extend({
                 this.$el.empty();
                 return;
             }
+            if (this._activeGroup === null && this.parentView && this.parentView._defaultGroup) {
+                this._activeGroup = this.parentView._defaultGroup;
+            }
+            const groupTree = this._buildGroupTree();
+            if (groupTree && !this._treeInitialized) {
+                this._treeInitialized = true;
+                this._initExpandedTreeNodes(groupTree);
+            }
+            const activeGroupNode = groupTree ? this._findNodeInTree(groupTree, this._activeGroup) : null;
             this.$el.html(annotationSelectorWidget({
                 id: 'annotation-panel-container',
                 title: 'Annotations',
                 activeAnnotation: this._activeAnnotation ? this._activeAnnotation.id : '',
+                activeGroup: this._activeGroup,
+                activeGroupNode,
                 showLabels: this._showLabels,
                 user: getCurrentUser() || {},
                 creationAccess: this.creationAccess,
@@ -105,6 +121,7 @@ var AnnotationSelector = Panel.extend({
                 interactiveMode: this._interactiveMode,
                 expandedGroups: this._expandedGroups,
                 annotationGroups,
+                groupTree,
                 annotationAccess: this._annotationAccess,
                 collapsed: this.$('.s-panel-content.collapse').length && !this.$('.s-panel-content').hasClass('in'),
                 _
@@ -142,6 +159,8 @@ var AnnotationSelector = Panel.extend({
         }
         this.parentItem = item;
         this._parentId = item.id;
+        this._activeGroup = null;
+        this._treeInitialized = false;
         delete this._setCreationRequest;
         delete this._annotationAccess;
 
@@ -264,11 +283,13 @@ var AnnotationSelector = Panel.extend({
             root.$('.h-create-annotation').toggleClass('hidden', !createResp);
             if (this.parentItem && this.parentItem.get('folderId') === folderId) {
                 this._annotationAccess = true;
+                this._debounceRender();
             }
         }).fail(() => {
             root.$('.h-create-annotation').toggleClass('hidden', true);
             if (this.parentItem && this.parentItem.get('folderId') === folderId) {
                 this._annotationAccess = false;
+                this._debounceRender();
             }
         });
     },
@@ -432,6 +453,15 @@ var AnnotationSelector = Panel.extend({
     },
 
     createAnnotation(evt) {
+        const groupTree = this._buildGroupTree();
+        if (groupTree) {
+            this._createAnnotationWithClass(groupTree);
+        } else {
+            this._createAnnotationDefault();
+        }
+    },
+
+    _createAnnotationDefault() {
         var model = new AnnotationModel({
             itemId: this.parentItem.id,
             annotation: {}
@@ -449,6 +479,64 @@ var AnnotationSelector = Panel.extend({
                 });
             }
         );
+    },
+
+    _createAnnotationWithClass(groupTree) {
+        const allNodes = [];
+        const flatten = (nodes) => nodes.forEach((n) => { allNodes.push(n); flatten(n.children); });
+        flatten(groupTree);
+
+        const radioItems = allNodes.map((n, i) => {
+            const swatch = `display:inline-block;width:12px;height:12px;background:${n.fillColor};border:2px solid ${n.lineColor};border-radius:2px;margin-right:6px;vertical-align:middle`;
+            const checked = (n.id === this._activeGroup || (!this._activeGroup && i === 0)) ? 'checked' : '';
+            return `<div class="radio" style="margin:4px 0"><label><input type="radio" name="h-class-pick" value="${n.id}" ${checked}><span style="${swatch}"></span>${_.escape(n.label)}</label></div>`;
+        }).join('');
+
+        const $modal = $(`
+            <div class="modal fade" tabindex="-1" role="dialog">
+              <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                  <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                    <h4 class="modal-title">New annotation &mdash; select class</h4>
+                  </div>
+                  <div class="modal-body">${radioItems}</div>
+                  <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary h-class-pick-ok">Create &amp; Draw</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+        `).appendTo('body');
+
+        let confirmed = false;
+        $modal.find('.h-class-pick-ok').on('click', () => {
+            confirmed = true;
+            $modal.modal('hide');
+        });
+
+        $modal.on('hidden.bs.modal', () => {
+            const groupId = $modal.find('input[name="h-class-pick"]:checked').val();
+            $modal.remove();
+            if (!confirmed || !groupId) { return; }
+            const node = this._findNodeInTree(groupTree, groupId);
+            this._setActiveGroup(groupId);
+            const name = node ? node.label : 'Annotations';
+            const model = new AnnotationModel({
+                itemId: this.parentItem.id,
+                annotation: {name}
+            });
+            this._norefresh = true;
+            model.save().done(() => {
+                model.set('displayed', true);
+                this.collection.add(model);
+                this.trigger('h:editAnnotation', model);
+                this._activeAnnotation = model;
+            });
+        });
+
+        $modal.modal('show');
     },
 
     _saveAnnotation(annotation, options) {
@@ -668,6 +756,146 @@ var AnnotationSelector = Panel.extend({
             }
         });
         this.trigger('h:groupCount', groupCount);
+    },
+
+    _buildGroupTree() {
+        const configGroups = (
+            this.parentView &&
+            this.parentView._folderConfig &&
+            this.parentView._folderConfig.annotationGroups &&
+            this.parentView._folderConfig.annotationGroups.groups
+        ) || null;
+        if (!configGroups || !configGroups.some((g) => g.parent)) {
+            return null;
+        }
+
+        const counts = {};
+        const annosByGroup = {};
+        this.collection.each((model) => {
+            const liveModels = model.elements ? model.elements().models : [];
+            const elems = liveModels.length > 0
+                ? liveModels.map((e) => ({group: e.get('group')}))
+                : (model.get('annotation') || {}).elements || [];
+            elems.forEach((e) => {
+                const g = e.group || '__other__';
+                counts[g] = (counts[g] || 0) + 1;
+                if (!annosByGroup[g]) {
+                    annosByGroup[g] = [];
+                }
+                if (!annosByGroup[g].includes(model)) {
+                    annosByGroup[g].push(model);
+                }
+            });
+        });
+
+        const nodeMap = {};
+        configGroups.forEach((g) => {
+            const rawLabel = g.label && typeof g.label === 'object' ? g.label.value : g.label;
+            nodeMap[g.id] = {
+                id: g.id,
+                label: rawLabel || g.id,
+                fillColor: g.fillColor || 'rgba(128,128,128,0.3)',
+                lineColor: g.lineColor || 'rgb(128,128,128)',
+                parent: g.parent || null,
+                count: counts[g.id] || 0,
+                annotations: annosByGroup[g.id] || [],
+                children: [],
+                depth: 0
+            };
+        });
+
+        const roots = [];
+        configGroups.forEach((g) => {
+            const node = nodeMap[g.id];
+            if (node.parent && nodeMap[node.parent]) {
+                nodeMap[node.parent].children.push(node);
+            } else {
+                roots.push(node);
+            }
+        });
+
+        const setDepth = (node, depth) => {
+            node.depth = depth;
+            node.children.forEach((c) => setDepth(c, depth + 1));
+        };
+        roots.forEach((r) => setDepth(r, 0));
+
+        const rollUp = (node) => {
+            node.children.forEach(rollUp);
+            node.children.forEach((c) => { node.count += c.count; });
+        };
+        roots.forEach(rollUp);
+
+        const otherCount = counts['__other__'] || 0;
+        if (otherCount > 0) {
+            roots.push({
+                id: '__other__',
+                label: 'Other',
+                fillColor: 'rgba(150,150,150,0.2)',
+                lineColor: 'rgb(150,150,150)',
+                parent: null,
+                count: otherCount,
+                annotations: annosByGroup['__other__'] || [],
+                children: [],
+                depth: 0
+            });
+        }
+
+        return roots;
+    },
+
+    _initExpandedTreeNodes(nodes) {
+        nodes.forEach((node) => {
+            if (node.children.length) {
+                this._expandedGroups.add('tree:' + node.id);
+                this._initExpandedTreeNodes(node.children);
+            }
+        });
+    },
+
+    _findNodeInTree(nodes, id) {
+        for (const node of nodes) {
+            if (node.id === id) { return node; }
+            const found = this._findNodeInTree(node.children, id);
+            if (found) { return found; }
+        }
+        return null;
+    },
+
+    _setActiveGroup(groupId) {
+        this._activeGroup = groupId;
+        this.trigger('h:setDefaultGroup', groupId);
+        this._debounceRender();
+    },
+
+    _handleClassClick(evt) {
+        if ($(evt.target).closest('.h-class-tree-toggle, .h-class-expand-annotations').length) {
+            return;
+        }
+        const groupId = $(evt.currentTarget).closest('.h-class-node').data('groupId');
+        if (groupId) {
+            this._setActiveGroup(groupId);
+        }
+    },
+
+    _toggleTreeNode(evt) {
+        evt.stopPropagation();
+        const groupId = $(evt.currentTarget).data('groupId');
+        const key = 'tree:' + groupId;
+        if (this._expandedGroups.has(key)) {
+            this._expandedGroups.delete(key);
+        } else {
+            this._expandedGroups.add(key);
+        }
+        this._debounceRender();
+    },
+
+    _openEditTaxonomyDialog() {
+        showEditTaxonomyDialog({
+            folderId: this.parentItem.get('folderId'),
+            folderConfig: (this.parentView || {})._folderConfig,
+            parentView: this.parentView
+        });
     }
 });
 

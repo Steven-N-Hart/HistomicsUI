@@ -20,77 +20,164 @@ block content
     .btn-group.btn-group-sm(role='group')
       button.btn.btn-default.h-annotation-select-by-region(type='button', title='Select annotations by region.  Keyboard shortcut: s; S selects using a polygon; C clears selection')
         | #[span.icon-marquee]
+    if annotationAccess
+      .btn-group.btn-group-sm(role='group')
+        button.btn.btn-default.h-edit-taxonomy(
+            type='button',
+            title=groupTree ? 'Edit annotation class taxonomy' : 'Set up annotation class taxonomy')
+          | #[span.icon-cog]
+          if !groupTree
+            |  Classes
 
-  - var groups = _.keys(annotationGroups);
-  - groups.sort();
-  each groupName in groups
-    -
-      var annotations = annotationGroups[groupName];
-      var expanded = expandedGroups.has(groupName);
-      var expandedClass = expanded ? 'h-group-expanded' : 'h-group-collapsed';
-      var samplestyle={};
-      annotations.some((a) => {
-        var elems = (a.get('annotation') || {}).elements;
-        if (!elems) {
-          return false;
-        }
-        return elems.some((e) => {
-          if (e.group === groupName) {
-            if (e.fillColor) {
-              samplestyle.background = e.fillColor;
-            }
-            if (e.lineColor) {
-              samplestyle['border-color'] = e.lineColor;
-            }
-            if (e.lineWidth) {
-              samplestyle['border-width'] = e.lineWidth + 'px';
-            }
-            return samplestyle.background && samplestyle['border-color'] && samplestyle['border-width'];
-          }
-        });
-      })
-    .h-annotation-group(class=[expandedClass], data-group-name=groupName)
-      .h-annotation-group-name
-        if expanded
-          i.icon-folder-open
+  mixin annotationRow(annotation, displayed, loading, partial, activeAnnotation, writeAccess)
+    - var name = annotation.get('annotation').name;
+    - var classes = [];
+    if annotation.id === activeAnnotation
+      - classes.push('h-active-annotation');
+    if annotation.get('highlight')
+      - classes.push('h-highlight-annotation')
+    .h-annotation(data-id=annotation.id, class=classes)
+      if loading
+        span.icon-spin3.animate-spin.h-float-left
+      else if displayed
+        span.icon-eye.h-toggle-annotation.h-float-left(
+          title='Hide annotation' + (partial ? '.  Annotation is only partially loaded' : ''), class=partial ? 'partial' : '')
+      else
+        span.icon-eye-off.h-toggle-annotation.h-float-left(
+          title='Show annotation')
+      span.h-annotation-name(title=name) #{name}
+
+      span.h-annotation-right
+        if writeAccess(annotation, true)
+          span.icon-cancel.h-delete-annotation(
+              title='Remove annotation')
+        if writeAccess(annotation)
+          span.icon-cog.h-edit-annotation-metadata(
+              title='Edit annotation')
+        a(href=annotation.downloadUrl().replace(/\/download$/, ''),
+            download=name + '.json')
+          span.icon-download.h-download-annotation(
+              title='Download annotation')
+
+  mixin classNode(node)
+    - var treeKey = 'tree:' + node.id
+    - var treeExpanded = expandedGroups.has(treeKey)
+    - var annoExpanded = expandedGroups.has(node.id)
+    - var isActive = node.id === activeGroup
+    .h-class-node(data-group-id=node.id, class=isActive ? 'h-active-class' : '')
+      .h-class-header
+        if node.children.length
+          span.h-class-tree-toggle(
+              data-group-id=node.id,
+              title=treeExpanded ? 'Collapse class' : 'Expand class')
+            i(class=treeExpanded ? 'icon-down-open' : 'icon-right-open')
         else
-          i.icon-folder
-        .h-annotation-group-text
-          = groupName
-        span.h-annotation-group-legend(style=samplestyle)
-      if expanded
-        each annotation in annotations
-          - var name = annotation.get('annotation').name;
-          - var displayed = annotation.get('displayed');
-          - var partial = annotation._centroids && annotation._centroids.partial
-          - var loading = annotation.get('loading');
-          - var classes = [];
-          if annotation.id === activeAnnotation
-            - classes.push('h-active-annotation');
-          if annotation.get('highlight')
-            - classes.push('h-highlight-annotation')
-          .h-annotation(data-id=annotation.id, class=classes)
-            if loading
-              span.icon-spin3.animate-spin.h-float-left
-            else if displayed
-              span.icon-eye.h-toggle-annotation.h-float-left(
-                title='Hide annotation' + (partial ? '.  Annotation is only partially loaded' : ''), class=partial ? 'partial' : '')
+          span.h-class-tree-toggle-placeholder
+        span.h-class-swatch(
+            style=`background:${node.fillColor}; border: 2px solid ${node.lineColor}`)
+        span.h-class-name(title='Click row to draw as this class') #{node.label}
+        span.h-class-count.badge(class=node.count === 0 ? 'h-count-zero' : '')= node.count
+        if node.annotations.length
+          span.h-class-expand-annotations.h-annotation-group-name(data-group-name=node.id)
+            if annoExpanded
+              i.icon-folder-open
             else
-              span.icon-eye-off.h-toggle-annotation.h-float-left(
-                title='Show annotation')
-            span.h-annotation-name(title=name) #{name}
+              i.icon-folder
+      if annoExpanded
+        each annotation in node.annotations
+          +annotationRow(annotation, annotation.get('displayed'), annotation.get('loading'), annotation._centroids && annotation._centroids.partial, activeAnnotation, writeAccess)
+      if treeExpanded
+        .h-class-children
+          each child in node.children
+            +classNode(child)
 
-            span.h-annotation-right
-              if writeAccess(annotation, true)
-                span.icon-cancel.h-delete-annotation(
-                    title='Remove annotation')
-              if writeAccess(annotation)
-                span.icon-cog.h-edit-annotation-metadata(
-                    title='Edit annotation')
-              a(href=annotation.downloadUrl().replace(/\/download$/, ''),
-                  download=name + '.json')
-                span.icon-download.h-download-annotation(
-                    title='Download annotation')
+  if groupTree
+    .h-active-class-status
+      if activeGroupNode
+        span.h-active-class-label Drawing as:&nbsp;
+        span.h-class-swatch(
+            style=`background:${activeGroupNode.fillColor}; border: 2px solid ${activeGroupNode.lineColor}`)
+        span.h-active-class-name  #{activeGroupNode.label}
+      else
+        span.h-no-active-class Click a class below to set drawing class
+    each node in groupTree
+      +classNode(node)
+  else
+    - var groups = _.keys(annotationGroups);
+    - groups.sort();
+    each groupName in groups
+      -
+        var annotations = annotationGroups[groupName];
+        var expanded = expandedGroups.has(groupName);
+        var expandedClass = expanded ? 'h-group-expanded' : 'h-group-collapsed';
+        var samplestyle={};
+        annotations.some((a) => {
+          var elems = (a.get('annotation') || {}).elements;
+          if (!elems) {
+            return false;
+          }
+          return elems.some((e) => {
+            if (e.group === groupName) {
+              if (e.fillColor) {
+                samplestyle.background = e.fillColor;
+              }
+              if (e.lineColor) {
+                samplestyle['border-color'] = e.lineColor;
+              }
+              if (e.lineWidth) {
+                samplestyle['border-width'] = e.lineWidth + 'px';
+              }
+              return samplestyle.background && samplestyle['border-color'] && samplestyle['border-width'];
+            }
+          });
+        })
+      .h-annotation-group(class=[expandedClass], data-group-name=groupName)
+        .h-annotation-group-name
+          if expanded
+            i.icon-folder-open
+          else
+            i.icon-folder
+          .h-annotation-group-text
+            = groupName
+          span.h-annotation-group-legend(style=samplestyle)
+        if expanded
+          each annotation in annotations
+            - var name = annotation.get('annotation').name;
+            - var displayed = annotation.get('displayed');
+            - var partial = annotation._centroids && annotation._centroids.partial
+            - var loading = annotation.get('loading');
+            - var classes = [];
+            if annotation.id === activeAnnotation
+              - classes.push('h-active-annotation');
+            if annotation.get('highlight')
+              - classes.push('h-highlight-annotation')
+            .h-annotation(data-id=annotation.id, class=classes)
+              if loading
+                span.icon-spin3.animate-spin.h-float-left
+              else if displayed
+                span.icon-eye.h-toggle-annotation.h-float-left(
+                  title='Hide annotation' + (partial ? '.  Annotation is only partially loaded' : ''), class=partial ? 'partial' : '')
+              else
+                span.icon-eye-off.h-toggle-annotation.h-float-left(
+                  title='Show annotation')
+              span.h-annotation-name(title=name) #{name}
+
+              span.h-annotation-right
+                if writeAccess(annotation, true)
+                  span.icon-cancel.h-delete-annotation(
+                      title='Remove annotation')
+                if writeAccess(annotation)
+                  span.icon-cog.h-edit-annotation-metadata(
+                      title='Edit annotation')
+                a(href=annotation.downloadUrl().replace(/\/download$/, ''),
+                    download=name + '.json')
+                  span.icon-download.h-download-annotation(
+                      title='Download annotation')
+
+  if !groupTree && annotationAccess
+    .h-taxonomy-prompt
+      | No class taxonomy defined.&nbsp;
+      a.h-edit-taxonomy(href='#', title='Set up class taxonomy') Set up classes
 
   .checkbox.h-annotation-toggle
     label(title='Show annotation labels when hovering with the mouse.')

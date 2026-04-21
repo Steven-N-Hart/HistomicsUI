@@ -1,0 +1,54 @@
+.modal.fade(tabindex='-1', role='dialog')
+  .modal-dialog.modal-lg(role='document')
+    .modal-content
+      .modal-header
+        button.close(type='button', data-dismiss='modal', aria-label='Close')
+          span(aria-hidden='true') &times;
+        h4.modal-title Edit Annotation Classes
+      .modal-body
+        if error
+          .alert.alert-danger= error
+        p.text-muted
+          | Define the class taxonomy for this folder. Set a
+          b  Parent
+          |  to create a hierarchy. Colors are used as fill color in the panel.
+        table.table.table-condensed.h-taxonomy-table
+          thead
+            tr
+              th ID
+              th Label
+              th Color
+              th Parent
+              th
+          tbody
+            each cls, idx in classes
+              tr.h-tax-row(data-idx=idx)
+                td
+                  input.form-control.input-sm.h-tax-id(
+                    type='text',
+                    value=cls.id,
+                    placeholder='unique-id')
+                td
+                  input.form-control.input-sm.h-tax-label(
+                    type='text',
+                    value=cls.label,
+                    placeholder='Display Name')
+                td
+                  input.h-tax-line-color(
+                    type='color',
+                    value=cls.colorHex || '#000000')
+                td
+                  select.form-control.input-sm.h-tax-parent
+                    option(value='') — none (root class)
+                    each opt in allIds
+                      if opt.id !== cls.id
+                        option(value=opt.id, selected=(cls.parent === opt.id))= opt.label || opt.id
+                td
+                  button.btn.btn-xs.btn-danger.h-tax-delete-row(type='button', title='Delete class')
+                    span.icon-cancel
+        button.btn.btn-default.btn-sm.h-tax-add-class(type='button')
+          span.icon-plus-squared
+          |  Add class
+      .modal-footer
+        button.btn.btn-default.h-tax-cancel(type='button') Cancel
+        button.btn.btn-primary.h-tax-save(type='button') Save

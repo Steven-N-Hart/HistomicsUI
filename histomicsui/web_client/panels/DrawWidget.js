@@ -78,6 +78,10 @@ var DrawWidget = Panel.extend({
             if (this._editOptions.style && this._groups.get(this._editOptions.style)) {
                 this._setStyleGroup(this._groups.get(this._editOptions.style).toJSON());
             }
+            const activeGroup = this.annotationSelector && this.annotationSelector._activeGroup;
+            if (activeGroup && this._groups.get(activeGroup)) {
+                this._setStyleGroup(this._groups.get(activeGroup).toJSON());
+            }
         });
         this.on('h:mouseon', (model) => {
             if (model && model.id) {
@@ -901,7 +905,7 @@ var DrawWidget = Panel.extend({
         this._style.set(group);
         if (!group.group && this._style.id !== this.parentView._defaultGroup) {
             this._style.set('group', this._style.id);
-        } else if (this._style.get('group') && this._style.id === this.parentView._defaultGroup) {
+        } else if (!group.group && this._style.get('group') && this._style.id === this.parentView._defaultGroup) {
             this._style.unset('group');
         }
         if (!group.label && this._style.get('label')) {
@@ -915,7 +919,9 @@ var DrawWidget = Panel.extend({
      * Set the current style group based on the current controls.
      */
     _setToSelectedStyleGroup() {
-        this._setStyleGroup(this._groups.get(this.$('.h-style-group').val()).toJSON());
+        const groupId = this.$('.h-style-group').val();
+        this._setStyleGroup(this._groups.get(groupId).toJSON());
+        this.trigger('h:drawGroupChanged', groupId);
     },
 
     selectElementsInGroup(evt) {
