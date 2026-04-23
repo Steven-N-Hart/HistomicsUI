@@ -1,12 +1,113 @@
+import os
+
 from girder import logger
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute, describeRoute
 from girder.api.rest import Resource, filtermodel
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
+from girder.models.assetstore import Assetstore
+from girder.models.file import File
+from girder.models.folder import Folder
 from girder.models.item import Item
 from girder.models.setting import Setting
+from girder.utility import assetstore_utilities
 from girder.utility.model_importer import ModelImporter
+
+# Alias map: normalized directory/file name → TRIDENT encoder ID.
+# Normalization: lowercase, then -, ., ' ' replaced with _.
+# This handles HuggingFace-style nested layout (org/model) and plain filenames.
+_ENCODER_ALIASES = {
+    # --- patch encoders ---
+    'conchv1_5': 'conch_v15', 'conch_v1_5': 'conch_v15',
+    'conch_v15': 'conch_v15', 'conchv15': 'conch_v15',
+    'conchv1': 'conch_v1', 'conch_v1': 'conch_v1', 'conch': 'conch_v1',
+    'uni_v2': 'uni_v2', 'uni2': 'uni_v2', 'uni2_h': 'uni_v2', 'univ2': 'uni_v2',
+    'uni_v1': 'uni_v1', 'uni': 'uni_v1', 'univ1': 'uni_v1',
+    'virchow2': 'virchow2',
+    'virchow': 'virchow',
+    'phikon_v2': 'phikon_v2', 'phikonv2': 'phikon_v2',
+    'phikon': 'phikon',
+    'gigapath': 'gigapath', 'prov_gigapath': 'gigapath', 'provgigapath': 'gigapath',
+    'hoptimus0': 'hoptimus0', 'h_optimus_0': 'hoptimus0',
+    'hoptimus1': 'hoptimus1', 'h_optimus_1': 'hoptimus1',
+    'musk': 'musk',
+    'midnight12k': 'midnight12k',
+    'kaiko_vitb8': 'kaiko-vitb8', 'kaiko_vitb16': 'kaiko-vitb16',
+    'kaiko_vits8': 'kaiko-vits8', 'kaiko_vits16': 'kaiko-vits16',
+    'kaiko_vitl14': 'kaiko-vitl14',
+    'lunit_vits8': 'lunit-vits8',
+    'hibou_l': 'hibou_l', 'hiboul': 'hibou_l',
+    'ctranspath': 'ctranspath',
+    'resnet50': 'resnet50',
+    # --- slide encoders that need own checkpoint ---
+    'threads': 'threads', 'titan': 'titan', 'prism': 'prism',
+    'chief': 'chief', 'madeleine': 'madeleine', 'feather': 'feather', 'abmil': 'abmil',
+}
+_PATCH_ENCODER_IDS = {eid for eid, _ in [
+    ('conch_v15', ''), ('conch_v1', ''), ('uni_v1', ''), ('uni_v2', ''),
+    ('virchow', ''), ('virchow2', ''), ('phikon', ''), ('phikon_v2', ''),
+    ('gigapath', ''), ('hoptimus0', ''), ('hoptimus1', ''), ('musk', ''),
+    ('midnight12k', ''), ('kaiko-vitb8', ''), ('kaiko-vitb16', ''),
+    ('kaiko-vits8', ''), ('kaiko-vits16', ''), ('kaiko-vitl14', ''),
+    ('lunit-vits8', ''), ('hibou_l', ''), ('ctranspath', ''), ('resnet50', ''),
+]}
+_SLIDE_CHECKPOINT_IDS = {'threads', 'titan', 'prism', 'chief', 'gigapath',
+                         'madeleine', 'feather', 'abmil'}
+
+
+def _norm(name):
+    """Normalize a directory/file name for alias lookup."""
+    return name.lower().replace('-', '_').replace('.', '_').replace(' ', '_')
+
+
+# Ordered list of known TRIDENT patch encoder IDs and display labels.
+_PATCH_ENCODER_META = [
+    ('conch_v15', 'CONCHv1.5'),
+    ('conch_v1', 'CONCH'),
+    ('uni_v1', 'UNI'),
+    ('uni_v2', 'UNI2-h'),
+    ('virchow', 'Virchow'),
+    ('virchow2', 'Virchow2'),
+    ('phikon', 'Phikon'),
+    ('phikon_v2', 'Phikon-v2'),
+    ('gigapath', 'Prov-GigaPath'),
+    ('hoptimus0', 'H-Optimus-0'),
+    ('hoptimus1', 'H-Optimus-1'),
+    ('musk', 'MUSK'),
+    ('midnight12k', 'Midnight-12k'),
+    ('kaiko-vitb8', 'Kaiko ViT-B/8'),
+    ('kaiko-vitb16', 'Kaiko ViT-B/16'),
+    ('kaiko-vits8', 'Kaiko ViT-S/8'),
+    ('kaiko-vits16', 'Kaiko ViT-S/16'),
+    ('kaiko-vitl14', 'Kaiko ViT-L/14'),
+    ('lunit-vits8', 'Lunit ViT-S/8'),
+    ('hibou_l', 'Hibou-L'),
+    ('ctranspath', 'CTransPath / CHIEF'),
+    ('resnet50', 'ResNet-50'),
+]
+
+# Slide encoder entries: (id, label, needs_own_checkpoint).
+# Mean-pool encoders (needs_own_checkpoint=False) are always listed because they
+# require no separate weights — they pool patch features at inference time.
+_SLIDE_ENCODER_META = [
+    ('threads', 'THREADS', True),
+    ('titan', 'TITAN', True),
+    ('prism', 'PRISM', True),
+    ('chief', 'CHIEF', True),
+    ('gigapath', 'GigaPath (slide)', True),
+    ('madeleine', 'Madeleine', True),
+    ('feather', 'Feather', True),
+    ('abmil', 'ABMIL', True),
+    ('mean-conch_v15', 'Mean Pool – CONCHv1.5', False),
+    ('mean-conch_v1', 'Mean Pool – CONCH', False),
+    ('mean-uni_v1', 'Mean Pool – UNI', False),
+    ('mean-uni_v2', 'Mean Pool – UNI2', False),
+    ('mean-ctranspath', 'Mean Pool – CTransPath', False),
+    ('mean-phikon', 'Mean Pool – Phikon', False),
+    ('mean-resnet50', 'Mean Pool – ResNet-50', False),
+    ('mean-gigapath', 'Mean Pool – GigaPath', False),
+]
 
 from .. import handlers
 from ..constants import PluginSettings
@@ -38,6 +139,10 @@ class HistomicsUIResource(Resource):
         # Similarly, this route handles calls to:
         #  `GET /api/v1/histomicsui/query_metadata`
         self.route('GET', ('query_metadata',), self.findItemsByMetadata)
+
+        self.route('GET', ('trident', 'encoders'), self.listTridentEncoders)
+        self.route('GET', ('trident', 'stage'), self.stageTridentJob)
+        self.route('POST', ('trident', 'stage'), self.stageTridentJob)
 
     @describeRoute(
         Description('Get public settings for HistomicsUI.'),
@@ -203,3 +308,141 @@ class HistomicsUIResource(Resource):
         # Finally, we turn the iterator into an explicit list for return to the
         # user.  Girder handles json encoding the response.
         return list(response)
+
+    @autoDescribeRoute(
+        Description('List available TRIDENT encoder models by scanning a directory.')
+        .param('path', 'Top-level directory containing model checkpoint subdirectories.',
+               required=False, default='/Export/Shared/HF_MODELS'),
+    )
+    @access.user(scope=TokenScope.DATA_READ)
+    def listTridentEncoders(self, path):
+        # Scan up to 2 levels deep: flat layout (path/model_name) AND
+        # HuggingFace org layout (path/org/model_name).
+        # Returns the actual found filesystem path for each encoder so the UI
+        # can auto-fill checkpoint fields precisely.
+        found_patch = {}   # encoder_id → full_path
+        found_slide_ckpt = {}  # encoder_id → full_path
+
+        def _check(name, full_path):
+            eid = _ENCODER_ALIASES.get(_norm(os.path.splitext(name)[0]))
+            if eid is None:
+                return
+            if eid in _PATCH_ENCODER_IDS:
+                found_patch[eid] = full_path
+            elif eid in _SLIDE_CHECKPOINT_IDS:
+                found_slide_ckpt[eid] = full_path
+
+        try:
+            top_entries = os.listdir(path)
+        except OSError:
+            top_entries = []
+
+        for entry in top_entries:
+            entry_path = os.path.join(path, entry)
+            if os.path.isfile(entry_path):
+                _check(entry, entry_path)
+            elif os.path.isdir(entry_path):
+                # Try the directory name itself (flat layout)
+                _check(entry, entry_path)
+                # Also scan one level deeper (org/model layout)
+                try:
+                    for child in os.listdir(entry_path):
+                        child_path = os.path.join(entry_path, child)
+                        _check(child, child_path)
+                except OSError:
+                    pass
+
+        patch = [
+            {'id': eid, 'label': label, 'foundPath': found_patch[eid]}
+            for eid, label in _PATCH_ENCODER_META
+            if eid in found_patch
+        ]
+        slide = []
+        for eid, label, needs in _SLIDE_ENCODER_META:
+            if needs:
+                if eid in found_slide_ckpt:
+                    slide.append({'id': eid, 'label': label, 'needsCheckpoint': True,
+                                  'foundPath': found_slide_ckpt[eid]})
+            else:
+                # Mean-pool: only available if the underlying patch encoder was found.
+                patch_id = eid[len('mean-'):]
+                if patch_id in found_patch:
+                    slide.append({'id': eid, 'label': label, 'needsCheckpoint': False,
+                                  'foundPath': ''})
+        return {'path': path, 'patch_encoders': patch, 'slide_encoders': slide}
+
+    @describeRoute(
+        Description('Stage a Girder resource for a TRIDENT job.')
+        .param('resourceId', 'The Girder resource ID (folder, collection, or user).')
+        .param('resourceType', 'The resource type.', required=False, default='folder',
+               enum=['folder', 'collection', 'user'])
+        .errorResponse('Resource not found or access denied.', 403)
+        .errorResponse('Staging area is not writable on the server.', 500),
+    )
+    @access.user(scope=TokenScope.DATA_READ)
+    def stageTridentJob(self, params):
+        user = self.getCurrentUser()
+        resource_id = params.get('resourceId')
+        if not resource_id:
+            raise RestException('Parameter "resourceId" is required.')
+        resource_type = params.get('resourceType', 'folder')
+
+        model = ModelImporter.model(resource_type)
+        resource = model.load(resource_id, user=user, level=AccessType.READ, exc=True)
+
+        staging_base = '/Export/Shared/DSA/TRIDENT'
+        username = user['login']
+        project_name = resource['name'].replace('/', '_').replace('\\', '_')
+        job_dir = os.path.join(staging_base, username, project_name)
+        wsi_dir = os.path.join(job_dir, 'wsi')
+
+        try:
+            os.makedirs(wsi_dir, exist_ok=True)
+        except OSError as e:
+            raise RestException(
+                f'Cannot create staging directory {wsi_dir}: {e}. '
+                'Ensure /Export/Shared/DSA/TRIDENT is writable by the server.',
+                code=500,
+            )
+
+        # Collect all items under the resource.
+        if resource_type == 'folder':
+            items = list(Folder().childItems(resource, user=user))
+        else:
+            # collection or user: gather items from all immediate child folders.
+            items = []
+            for folder in Folder().childFolders(
+                    parent=resource, parentType=resource_type, user=user):
+                items.extend(Folder().childItems(folder, user=user))
+
+        staged = []
+        skipped = []
+        for item in items:
+            files = list(Item().childFiles(item, limit=1))
+            if not files:
+                skipped.append(item['name'])
+                continue
+            file = files[0]
+            try:
+                store = Assetstore().load(file['assetstoreId'])
+                adapter = assetstore_utilities.getAssetstoreAdapter(store)
+                src = adapter.fullPath(file)
+            except Exception:
+                skipped.append(item['name'])
+                continue
+
+            dest = os.path.join(wsi_dir, item['name'])
+            if os.path.islink(dest) or os.path.exists(dest):
+                os.remove(dest)
+            try:
+                os.symlink(src, dest)
+                staged.append(item['name'])
+            except OSError:
+                skipped.append(item['name'])
+
+        return {
+            'wsi_dir': wsi_dir,
+            'job_dir': job_dir,
+            'staged': staged,
+            'skipped': skipped,
+        }

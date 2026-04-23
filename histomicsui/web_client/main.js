@@ -13,6 +13,7 @@ import './views/itemPage';
 import './views/HierarchyWidget';
 import './views/searchResultsView';
 import './views/JobDetailsWidget';
+import './views/JobListWidget';
 
 import ConfigView from './views/body/ConfigView';
 

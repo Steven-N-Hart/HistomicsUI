@@ -1,0 +1,234 @@
+.modal.fade(tabindex='-1', role='dialog')
+  .modal-dialog.modal-lg(role='document')
+    .modal-content
+      .modal-header
+        button.close(type='button', data-dismiss='modal', aria-label='Close')
+          span(aria-hidden='true') &times;
+        h4.modal-title TRIDENT Embeddings
+      .modal-body
+        if error
+          .alert.alert-danger= error
+        p.text-muted
+          | Generate patch-level (and optionally slide-level) embeddings from whole-slide images
+          | in the selected folder using the TRIDENT pipeline.
+
+        form.form-horizontal.h-trident-form
+
+          //- Hidden params — auto-derived, not user-editable
+          input#h-trident-wsi-dir(type='hidden', name='wsi_dir')
+          input#h-trident-job-dir(type='hidden', name='job_dir')
+
+          //- Pipeline Control
+          .panel.panel-default
+            .panel-heading Pipeline Control
+            .panel-body
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-task') Task
+                .col-sm-8
+                  select.form-control#h-trident-task(name='task')
+                    option(value='all') All stages (seg → coords → feat)
+                    option(value='seg') Segmentation only
+                    option(value='coords') Patch extraction only
+                    option(value='feat') Feature extraction only
+              .form-group
+                label.col-sm-4.control-label Staging Directory
+                .col-sm-8
+                  p.form-control-static#h-trident-staging-display.text-muted …
+                  p.help-block.small
+                    | Slides are read from the
+                    code  wsi/
+                    |  subfolder; embeddings are written alongside. DICOMweb slides are
+                    | downloaded here automatically before processing.
+
+          //- Patch Encoder
+          .panel.panel-default
+            .panel-heading Patch Encoder
+            .panel-body
+              .form-group
+                label.col-sm-4.control-label Model Base Directory
+                .col-sm-8
+                  .input-group
+                    input.form-control#h-trident-model-dir(
+                      type='text', placeholder='/Export/Shared/HF_MODELS')
+                    span.input-group-btn
+                      button.btn.btn-default#h-trident-scan-models(type='button') Scan
+                  p.help-block.small Directory scanned for model checkpoints. Only models found here appear in the list below.
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-patch-encoder') Model
+                .col-sm-8
+                  select.form-control#h-trident-patch-encoder(name='patch_encoder')
+                    option(value='') Scanning…
+                  small.text-muted.h-trident-rec-settings
+                  p.help-block.small.h-trident-encoder-warning(style='display:none')
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-patch-ckpt') Checkpoint Path
+                .col-sm-8
+                  input.form-control#h-trident-patch-ckpt(
+                    type='text', name='patch_encoder_ckpt_path',
+                    placeholder='auto-filled from Model Base Directory')
+                  p.help-block.small Path to pre-downloaded model weights.
+
+          //- Patching
+          .panel.panel-default
+            .panel-heading Patch Extraction
+            .panel-body
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-mag') Magnification
+                .col-sm-8
+                  select.form-control#h-trident-mag(name='mag')
+                    option(value='20') 20×
+                    option(value='40') 40×
+                    option(value='10') 10×
+                    option(value='5') 5×
+                    option(value='80') 80×
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-patch-size') Patch Size (px)
+                .col-sm-8
+                  input.form-control#h-trident-patch-size(
+                    type='number', name='patch_size', value='512', min='64', step='32')
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-overlap') Overlap (px)
+                .col-sm-8
+                  input.form-control#h-trident-overlap(
+                    type='number', name='overlap', value='0', min='0')
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-min-tissue') Min Tissue Proportion
+                .col-sm-8
+                  input.form-control#h-trident-min-tissue(
+                    type='number', name='min_tissue_proportion', value='0.0',
+                    min='0', max='1', step='0.05')
+
+          //- Segmentation (visible when task includes seg)
+          .panel.panel-default.h-trident-seg-section
+            .panel-heading Tissue Segmentation
+            .panel-body
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-segmenter') Segmenter
+                .col-sm-8
+                  select.form-control#h-trident-segmenter(name='segmenter')
+                    option(value='hest') HEST (DeepLabV3, all stain types)
+                    option(value='grandqc') GrandQC (faster, H&E optimised)
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-seg-thresh') Confidence Threshold
+                .col-sm-8
+                  input.form-control#h-trident-seg-thresh(
+                    type='number', name='seg_conf_thresh', value='0.5',
+                    min='0', max='1', step='0.05')
+                  p.help-block.small Lower values keep more tissue. Try 0.4 if tissue is under-segmented.
+              .form-group
+                .col-sm-8.col-sm-offset-4
+                  .checkbox
+                    label
+                      input(type='checkbox', name='remove_holes', value='true')
+                      |  Remove Holes in Tissue
+                  .checkbox
+                    label
+                      input(type='checkbox', name='remove_artifacts', value='true')
+                      |  Remove Artifacts
+                  .checkbox
+                    label
+                      input(type='checkbox', name='remove_penmarks', value='true')
+                      |  Remove Pen Marks
+
+          //- Slide Encoder (optional)
+          .panel.panel-default
+            .panel-heading Slide Encoder
+              small.text-muted  (optional)
+            .panel-body
+              .form-group
+                label.col-sm-4.control-label(for='h-trident-slide-encoder') Model
+                .col-sm-8
+                  select.form-control#h-trident-slide-encoder(name='slide_encoder')
+                    option(value='none') None (skip slide encoding)
+              .form-group.h-trident-slide-ckpt-row(style='display:none')
+                label.col-sm-4.control-label(for='h-trident-slide-ckpt') Slide Encoder Checkpoint
+                .col-sm-8
+                  input.form-control#h-trident-slide-ckpt(
+                    type='text', name='slide_encoder_ckpt_path',
+                    placeholder='/checkpoints/slide_encoder.bin')
+                  p.help-block.small Path to pre-downloaded slide encoder weights.
+
+          //- Advanced Options (collapsible)
+          .panel.panel-default
+            .panel-heading
+              a(href='#h-trident-advanced', data-toggle='collapse', aria-expanded='false')
+                | Advanced Options
+                span.caret
+            #h-trident-advanced.panel-collapse.collapse
+              .panel-body
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-gpu') GPU Index
+                  .col-sm-8
+                    input.form-control#h-trident-gpu(
+                      type='number', name='gpu', value='0')
+                    p.help-block.small Use -1 for CPU (slow).
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-batch-size') Default Batch Size
+                  .col-sm-8
+                    input.form-control#h-trident-batch-size(
+                      type='number', name='batch_size', value='64', min='1')
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-seg-batch') Segmentation Batch Size
+                  .col-sm-8
+                    input.form-control#h-trident-seg-batch(
+                      type='number', name='seg_batch_size', value='0', min='0')
+                    p.help-block.small 0 = use default batch size.
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-feat-batch') Feature Batch Size
+                  .col-sm-8
+                    input.form-control#h-trident-feat-batch(
+                      type='number', name='feat_batch_size', value='0', min='0')
+                    p.help-block.small 0 = use default batch size.
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-max-workers') Max Workers
+                  .col-sm-8
+                    input.form-control#h-trident-max-workers(
+                      type='number', name='max_workers', value='0', min='0')
+                    p.help-block.small 0 = auto-detect.
+                .form-group
+                  .col-sm-8.col-sm-offset-4
+                    .checkbox
+                      label
+                        input(type='checkbox', name='skip_errors', value='true')
+                        |  Skip errors (continue on failed slides)
+                    .checkbox
+                      label
+                        input(type='checkbox', name='search_nested', value='true')
+                        |  Search nested subdirectories
+                .form-group
+                  label.col-sm-4.control-label Output Format
+                  .col-sm-8
+                    select.form-control(name='saveas')
+                      option(value='h5') HDF5 (.h5)
+                      option(value='pt') PyTorch tensor (.pt)
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-wsi-ext') WSI Extensions
+                  .col-sm-8
+                    input.form-control#h-trident-wsi-ext(
+                      type='text', name='wsi_ext', placeholder='.svs,.ndpi,.tif')
+                    p.help-block.small Comma-separated; leave empty for all supported formats.
+                .form-group
+                  label.col-sm-4.control-label WSI Reader
+                  .col-sm-8
+                    select.form-control(name='reader_type')
+                      option(value='auto') Auto-detect
+                      option(value='openslide') OpenSlide
+                      option(value='cucim') cuCIM (GPU)
+                      option(value='image') PIL Image
+                      option(value='sdpc') SDPC
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-mpp-keys') Custom MPP Keys
+                  .col-sm-8
+                    input.form-control#h-trident-mpp-keys(
+                      type='text', name='custom_mpp_keys', placeholder='mpp,openslide.mpp-x')
+                    p.help-block.small Comma-separated metadata keys for microns-per-pixel.
+                .form-group
+                  label.col-sm-4.control-label(for='h-trident-coords-dir') Coordinates Directory
+                  .col-sm-8
+                    input.form-control#h-trident-coords-dir(
+                      type='text', name='coords_dir', placeholder='(auto-generated)')
+                    p.help-block.small Leave empty to auto-name based on mag/patch_size/overlap.
+
+      .modal-footer
+        button.btn.btn-default(type='button', data-dismiss='modal') Cancel
+        button.btn.btn-primary.h-trident-submit(type='button') Generate Embeddings
