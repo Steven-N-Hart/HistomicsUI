@@ -73,20 +73,20 @@ def _collect_items_recursive(folder, user):
     return items
 
 
-def _export_dicomweb_item_as_tiff(item, wsi_dir):
+def _export_dicomweb_item_as_dicoms(item, wsi_dir):
     """
-    Export a DICOMweb-backed Girder item as a pyramidal TIFF into *wsi_dir*.
+    Download a DICOMweb-backed Girder item's instances into ``wsi_dir/<item_name>/``
+    as raw .dcm files. TRIDENT reads the series directly via OpenSlide
+    (reader_type=openslide auto-discovers sibling instances in the directory) —
+    no TIFF conversion needed.
 
-    Strategy: download every instance of the series via DICOMweb to a temp
-    directory, then convert with large_image_converter (which uses wsidicom
-    locally and auto-discovers sibling instances in the same dir). Cleans up
-    the temp dir afterward.
+    Idempotent: if the directory already contains at least as many .dcm files
+    as the item has instances, returns immediately without re-downloading.
+    Per-file re-download is also skipped when the file already exists on disk.
 
-    Returns the output path on success, or None if the item cannot be exported.
+    Returns the on-disk directory path on success, or None if the item cannot
+    be exported.
     """
-    import shutil
-    import tempfile
-
     import requests
 
     try:
@@ -100,18 +100,29 @@ def _export_dicomweb_item_as_tiff(item, wsi_dir):
         if not dicom_uids:
             return None
 
+        study_uid = dicom_uids.get('study_uid', '')
+        series_uid = dicom_uids.get('series_uid', '')
+        if not (study_uid and series_uid):
+            return None
+
+        instance_files = [
+            f for f in files if (f.get('dicom_uids') or {}).get('instance_uid')
+        ]
+        if not instance_files:
+            return None
+
+        item_dir = os.path.join(wsi_dir, item['name'])
+        if os.path.isdir(item_dir):
+            existing = [n for n in os.listdir(item_dir) if n.endswith('.dcm')]
+            if len(existing) >= len(instance_files):
+                return item_dir
+
         store = _Assetstore().load(files[0]['assetstoreId'])
         meta = store.get(DICOMWEB_META_KEY) or {}
         base_url = meta.get('url', '')
         token = meta.get('auth_token', '')
-        study_uid = dicom_uids.get('study_uid', '')
-        series_uid = dicom_uids.get('series_uid', '')
-        if not (base_url and study_uid and series_uid):
+        if not base_url:
             return None
-
-        out_path = os.path.join(wsi_dir, item['name'] + '.tiff')
-        if os.path.exists(out_path):
-            return out_path
 
         from dicomweb_client.api import DICOMwebClient
         session = requests.Session()
@@ -124,50 +135,31 @@ def _export_dicomweb_item_as_tiff(item, wsi_dir):
             session=session,
         )
 
-        tmp_dir = tempfile.mkdtemp(prefix='trident_dicom_', dir=wsi_dir)
-        try:
-            for f in files:
-                instance_uid = (f.get('dicom_uids') or {}).get('instance_uid')
-                if not instance_uid:
-                    continue
-                dataset = client.retrieve_instance(study_uid, series_uid, instance_uid)
-                dest = os.path.join(tmp_dir, f['name'])
-                dataset.save_as(dest, write_like_original=False)
-
-            staged = sorted(os.listdir(tmp_dir))
-            if not staged:
-                logger.warning(
-                    'DICOMweb TIFF export for %s: no instances retrieved.',
-                    item.get('name'),
-                )
-                return None
-
-            import large_image_converter
-            large_image_converter.convert(
-                os.path.join(tmp_dir, staged[0]),
-                out_path,
-                overwrite=True,
-                compression='jpeg',
-                quality=85,
+        os.makedirs(item_dir, exist_ok=True)
+        for f in instance_files:
+            dest = os.path.join(item_dir, f['name'])
+            if os.path.exists(dest):
+                continue
+            dataset = client.retrieve_instance(
+                study_uid, series_uid, f['dicom_uids']['instance_uid'],
             )
-            return out_path
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            dataset.save_as(dest, write_like_original=False)
+        return item_dir
 
     except requests.HTTPError as exc:
         if exc.response is not None and exc.response.status_code == 401:
             logger.warning(
-                'DICOMweb TIFF export for %s failed with 401 Unauthorized. '
+                'DICOMweb export for %s failed with 401 Unauthorized. '
                 'The assetstore auth token has likely expired; refresh it via '
                 'POST /api/v1/dicom_import/refresh_token with a fresh '
                 '`gcloud auth print-access-token`.',
                 item.get('name'),
             )
         else:
-            logger.warning('DICOMweb TIFF export failed for %s: %s', item.get('name'), exc)
+            logger.warning('DICOMweb export failed for %s: %s', item.get('name'), exc)
         return None
     except Exception as exc:
-        logger.warning('DICOMweb TIFF export failed for %s: %s', item.get('name'), exc)
+        logger.warning('DICOMweb export failed for %s: %s', item.get('name'), exc)
         return None
 
 
@@ -221,8 +213,8 @@ def _stage_one_item(item, wsi_dir):
         pass
 
     if src is None:
-        tiff_path = _export_dicomweb_item_as_tiff(item, wsi_dir)
-        return 'staged' if tiff_path else 'skipped_dicomweb'
+        item_dir = _export_dicomweb_item_as_dicoms(item, wsi_dir)
+        return 'staged' if item_dir else 'skipped_dicomweb'
 
     dest = os.path.join(wsi_dir, item['name'])
     if os.path.islink(dest) or os.path.exists(dest):
@@ -733,6 +725,7 @@ class HistomicsUIResource(Resource):
             'job_dir': job_dir,
             'jobId': str(job['_id']),
             'totalItems': len(items),
+            'itemIds': [str(it['_id']) for it in items],
         }
 
     @describeRoute(

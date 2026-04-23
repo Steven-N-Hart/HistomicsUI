@@ -1,8 +1,8 @@
 import $ from 'jquery';
 import Backbone from 'backbone';
 
-import {restRequest} from '@girder/core/rest';
-import {getCurrentUser} from '@girder/core/auth';
+import {restRequest, getApiRoot} from '@girder/core/rest';
+import {getCurrentUser, getCurrentToken} from '@girder/core/auth';
 import events from '@girder/core/events';
 
 import tridentEmbeddingsTemplate from '../templates/dialogs/tridentEmbeddings.pug';
@@ -329,7 +329,7 @@ const TridentEmbeddingsView = Backbone.View.extend({
             return;
         }
 
-        this.$('.h-trident-submit').prop('disabled', true).text('Staging files…');
+        this.$('.h-trident-submit').prop('disabled', true).text('Queueing…');
         this.$('.alert-danger').remove();
 
         const stageData = {resourceId: this._folderId, resourceType: this._resourceType};
@@ -339,20 +339,29 @@ const TridentEmbeddingsView = Backbone.View.extend({
         if (this._checkedFolderIds && this._checkedFolderIds.length) {
             stageData.folderIds = this._checkedFolderIds.join(',');
         }
+        // Collect form params before the modal closes and the DOM is torn down.
+        const formParams = this._collectParams();
+        const cliId = this._cliId;
+
         restRequest({
             url: 'histomicsui/trident/stage',
             data: stageData,
             error: null
-        }).then((staging) => {
+        }).done((staging) => {
             const total = staging.totalItems || 0;
-            this.$('.h-trident-submit').text(`Staging 0/${total}…`);
-            return this._waitForStagingJob(staging.jobId, total).then((staged) => {
-                this.$('.h-trident-submit').text('Submitting…');
 
-                const params = this._collectParams();
-                params.wsi_dir = staging.wsi_dir;
-                params.job_dir = staging.job_dir;
+            // Staging is queued — close the modal so the user can keep working
+            // while downloads proceed in the background. The CLI job is
+            // submitted after staging completes.
+            this.$('.modal').modal('hide');
+            events.trigger('g:alert', {
+                icon: 'info',
+                text: `Staging ${total} slide(s) for TRIDENT… the job will be submitted when downloads finish.`,
+                type: 'info',
+                timeout: 5000
+            });
 
+            this._waitForStagingJob(staging.jobId, total).then((staged) => {
                 if (staged.skipped && staged.skipped.length) {
                     console.warn('TRIDENT staging: skipped items', staged.skipped);
                 }
@@ -361,33 +370,54 @@ const TridentEmbeddingsView = Backbone.View.extend({
                         staged.skipped_dicomweb);
                 }
 
+                const params = Object.assign({}, formParams, {
+                    wsi_dir: staging.wsi_dir,
+                    job_dir: staging.job_dir,
+                    girderApiUrl: getApiRoot(),
+                    girderToken: getCurrentToken()
+                });
+                // Pass the staged item IDs so the CLI's _stage_slides_from_girder
+                // builds the stem→item_id map needed to post annotations and
+                // metadata stamps back to the source slides. Staging already
+                // populated the directory, so the CLI will skip re-downloading.
+                if (staging.itemIds && staging.itemIds.length) {
+                    params.slide_item_ids = staging.itemIds.join(',');
+                }
+
                 return restRequest({
-                    url: `slicer_cli_web/cli/${this._cliId}/run`,
+                    url: `slicer_cli_web/cli/${cliId}/run`,
                     method: 'POST',
                     data: params,
                     error: null
                 });
-            });
-        }).done((job) => {
-            this.$('.modal').modal('hide');
-            const jobId = (job || {})._id;
-            events.trigger('g:alert', {
-                icon: 'ok',
-                text: 'TRIDENT job submitted.',
-                type: 'success',
-                timeout: 6000
-            });
-            if (jobId) {
-                $('<div class="alert alert-info h-trident-job-link" style="position:fixed;bottom:60px;right:20px;z-index:9999;padding:10px 16px;">' +
-                    '<a href="#jobs/' + jobId + '">View TRIDENT job →</a>' +
-                    '</div>').appendTo('body').delay(6000).fadeOut(400, function () {
-                    $(this).remove();
+            }).done((job) => {
+                const jobId = (job || {})._id;
+                events.trigger('g:alert', {
+                    icon: 'ok',
+                    text: 'TRIDENT job submitted.',
+                    type: 'success',
+                    timeout: 6000
                 });
-            }
+                if (jobId) {
+                    $('<div class="alert alert-info h-trident-job-link" style="position:fixed;bottom:60px;right:20px;z-index:9999;padding:10px 16px;">' +
+                        '<a href="#jobs/' + jobId + '">View TRIDENT job →</a>' +
+                        '</div>').appendTo('body').delay(6000).fadeOut(400, function () {
+                        $(this).remove();
+                    });
+                }
+            }).fail((resp) => {
+                const msg = ((resp.responseJSON || {}).message) || resp.statusText || 'Unknown error';
+                events.trigger('g:alert', {
+                    icon: 'cancel',
+                    text: 'TRIDENT submission failed: ' + msg,
+                    type: 'danger',
+                    timeout: 10000
+                });
+            });
         }).fail((resp) => {
             this.$('.h-trident-submit').prop('disabled', false).text('Generate Embeddings');
             const msg = ((resp.responseJSON || {}).message) || resp.statusText || 'Unknown error';
-            this._showError('Failed: ' + msg);
+            this._showError('Failed to queue staging: ' + msg);
         });
     },
 
@@ -444,6 +474,8 @@ var showTridentEmbeddingsDialog = function (settings) {
     const view = new TridentEmbeddingsView({
         folderId: settings.folderId,
         resourceType: settings.resourceType,
+        checkedItemIds: settings.checkedItemIds || null,
+        checkedFolderIds: settings.checkedFolderIds || null,
         el: $('<div/>').appendTo('body')
     });
     view.render();
