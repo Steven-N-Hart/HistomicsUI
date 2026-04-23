@@ -16,15 +16,26 @@ wrap(ItemListWidget, 'render', function (render) {
     render.call(this);
 
     function adjustView(settings) {
-        if (!settings || !settings['histomicsui.quarantine_folder']) {
-            return;
-        }
         for (let ix = 0; ix < this.collection.length; ix++) {
-            if (!this.$el.find('.g-item-list li.g-item-list-entry:eq(' + ix + ') .g-hui-quarantine').length) {
-                this.$el.find('.g-item-list li.g-item-list-entry:eq(' + ix + ') a[class^=g-]:last').after(
-                    $('<a class="g-hui-quarantine"><span>Q</span></a>').attr({
+            const $entry = this.$el.find('.g-item-list li.g-item-list-entry:eq(' + ix + ')');
+            const $lastLink = $entry.find('a[class^=g-]:last');
+
+            if (settings && settings['histomicsui.quarantine_folder']) {
+                if (!$entry.find('.g-hui-quarantine').length) {
+                    $lastLink.after(
+                        $('<a class="g-hui-quarantine"><span>Q</span></a>').attr({
+                            'g-item-cid': this.collection.models[ix].cid,
+                            title: 'Move this item to the quarantine folder'
+                        })
+                    );
+                }
+            }
+
+            if (!$entry.find('.g-hui-delete-item').length) {
+                $entry.find('a[class^=g-]:last').after(
+                    $('<a class="g-hui-delete-item"><i class="icon-trash"></i></a>').attr({
                         'g-item-cid': this.collection.models[ix].cid,
-                        title: 'Move this item to the quarantine folder'
+                        title: 'Delete this item'
                     })
                 );
             }
@@ -62,6 +73,46 @@ wrap(ItemListWidget, 'render', function (render) {
         });
     }
 
+    function deleteItem(event) {
+        const target = $(event.currentTarget);
+        const cid = target.attr('g-item-cid');
+        const item = root.collection.get(cid);
+        const itemName = item.get('name') || 'this item';
+
+        events.trigger('h:confirmDialog', {
+            title: 'Delete Item',
+            message: `Are you sure you want to permanently delete "${itemName}"? This cannot be undone.`,
+            submitButton: 'Delete',
+            onSubmit: () => {
+                restRequest({
+                    type: 'DELETE',
+                    url: 'item/' + item.id,
+                    error: null
+                }).done(() => {
+                    events.trigger('g:alert', {
+                        icon: 'ok',
+                        text: 'Item deleted.',
+                        type: 'success',
+                        timeout: 4000
+                    });
+                    root.trigger('g:changed');
+                    if (root.parentView && root.parentView.setCurrentModel && root.parentView.parentModel) {
+                        root.parentView.setCurrentModel(root.parentView.parentModel, {setRoute: false});
+                    } else {
+                        target.closest('.g-item-list-entry').remove();
+                    }
+                }).fail(() => {
+                    events.trigger('g:alert', {
+                        icon: 'cancel',
+                        text: 'Failed to delete item.',
+                        type: 'danger',
+                        timeout: 4000
+                    });
+                });
+            }
+        });
+    }
+
     HuiSettings.getSettings().then((settings) => {
         if (this.accessLevel >= AccessType.WRITE) {
             adjustView.call(this, settings);
@@ -71,6 +122,7 @@ wrap(ItemListWidget, 'render', function (render) {
 
     if (this.accessLevel >= AccessType.WRITE) {
         this.events['click .g-hui-quarantine'] = quarantine;
+        this.events['click .g-hui-delete-item'] = deleteItem;
         this.delegateEvents();
     }
 });
