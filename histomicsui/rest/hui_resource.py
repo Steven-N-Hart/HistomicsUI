@@ -61,6 +61,14 @@ def _norm(name):
     return name.lower().replace('-', '_').replace('.', '_').replace(' ', '_')
 
 
+def _collect_items_recursive(folder, user):
+    """Return all items in *folder* and every descendant folder."""
+    items = list(Folder().childItems(folder, user=user))
+    for subfolder in Folder().childFolders(parent=folder, parentType='folder', user=user):
+        items.extend(_collect_items_recursive(subfolder, user))
+    return items
+
+
 # Ordered list of known TRIDENT patch encoder IDs and display labels.
 _PATCH_ENCODER_META = [
     ('conch_v15', 'CONCHv1.5'),
@@ -376,6 +384,12 @@ class HistomicsUIResource(Resource):
         .param('resourceId', 'The Girder resource ID (folder, collection, or user).')
         .param('resourceType', 'The resource type.', required=False, default='folder',
                enum=['folder', 'collection', 'user'])
+        .param('itemIds', 'Comma-separated Girder item IDs to stage. '
+               'When provided, only these items (and any folderIds) are staged.',
+               required=False)
+        .param('folderIds', 'Comma-separated Girder folder IDs to stage recursively. '
+               'When provided, all items within these folders (and sub-folders) are staged.',
+               required=False)
         .errorResponse('Resource not found or access denied.', 403)
         .errorResponse('Staging area is not writable on the server.', 500),
     )
@@ -405,15 +419,36 @@ class HistomicsUIResource(Resource):
                 code=500,
             )
 
-        # Collect all items under the resource.
-        if resource_type == 'folder':
-            items = list(Folder().childItems(resource, user=user))
-        else:
-            # collection or user: gather items from all immediate child folders.
+        item_ids_param = params.get('itemIds', '')
+        folder_ids_param = params.get('folderIds', '')
+
+        if item_ids_param or folder_ids_param:
+            # Process only the explicitly selected items and/or folders.
             items = []
-            for folder in Folder().childFolders(
-                    parent=resource, parentType=resource_type, user=user):
-                items.extend(Folder().childItems(folder, user=user))
+            if item_ids_param:
+                for iid in item_ids_param.split(','):
+                    iid = iid.strip()
+                    if iid:
+                        item = Item().load(iid, user=user, level=AccessType.READ, exc=False)
+                        if item:
+                            items.append(item)
+            if folder_ids_param:
+                for fid in folder_ids_param.split(','):
+                    fid = fid.strip()
+                    if fid:
+                        folder = Folder().load(fid, user=user, level=AccessType.READ, exc=False)
+                        if folder:
+                            items.extend(_collect_items_recursive(folder, user))
+        else:
+            # No explicit selection — process all items under the resource.
+            if resource_type == 'folder':
+                items = list(Folder().childItems(resource, user=user))
+            else:
+                # collection or user: gather items from all immediate child folders.
+                items = []
+                for folder in Folder().childFolders(
+                        parent=resource, parentType=resource_type, user=user):
+                    items.extend(Folder().childItems(folder, user=user))
 
         staged = []
         skipped = []

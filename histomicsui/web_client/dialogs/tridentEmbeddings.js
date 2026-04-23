@@ -94,6 +94,8 @@ const TridentEmbeddingsView = Backbone.View.extend({
     initialize(settings) {
         this._folderId = settings.folderId;
         this._resourceType = settings.resourceType || 'folder';
+        this._checkedItemIds = settings.checkedItemIds || null;
+        this._checkedFolderIds = settings.checkedFolderIds || null;
         this._wsiDir = '';
         this._cliId = null;
         this._error = null;
@@ -110,6 +112,17 @@ const TridentEmbeddingsView = Backbone.View.extend({
         this.$el.html(tridentEmbeddingsTemplate({error: this._error}));
         this.$('.modal').modal('show');
         this.$('.modal').on('hidden.bs.modal', () => this.remove());
+
+        const nItems = this._checkedItemIds ? this._checkedItemIds.length : 0;
+        const nFolders = this._checkedFolderIds ? this._checkedFolderIds.length : 0;
+        if (nItems || nFolders) {
+            const parts = [];
+            if (nFolders) { parts.push(`${nFolders} folder${nFolders > 1 ? 's' : ''} (recursive)`); }
+            if (nItems) { parts.push(`${nItems} item${nItems > 1 ? 's' : ''}`); }
+            this.$('#h-trident-selection-info').text(`Scope: ${parts.join(' and ')}.`);
+        } else {
+            this.$('#h-trident-selection-info').text('Scope: all items in the current folder.');
+        }
 
         this._loadCliInfo();
         return this;
@@ -319,9 +332,16 @@ const TridentEmbeddingsView = Backbone.View.extend({
         this.$('.h-trident-submit').prop('disabled', true).text('Staging files…');
         this.$('.alert-danger').remove();
 
+        const stageData = {resourceId: this._folderId, resourceType: this._resourceType};
+        if (this._checkedItemIds && this._checkedItemIds.length) {
+            stageData.itemIds = this._checkedItemIds.join(',');
+        }
+        if (this._checkedFolderIds && this._checkedFolderIds.length) {
+            stageData.folderIds = this._checkedFolderIds.join(',');
+        }
         restRequest({
             url: 'histomicsui/trident/stage',
-            data: {resourceId: this._folderId, resourceType: this._resourceType},
+            data: stageData,
             error: null
         }).then((staging) => {
             this.$('.h-trident-submit').text('Submitting…');

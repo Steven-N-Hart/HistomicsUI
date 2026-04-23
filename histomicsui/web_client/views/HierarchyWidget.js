@@ -57,9 +57,25 @@ wrap(HierarchyWidget, 'render', function (render) {
             '<i class="icon-tasks"></i> TRIDENT Embeddings' +
             '</button>');
         $btn.on('click', () => {
+            const checkedItemIds = [];
+            const checkedFolderIds = [];
+            if (self.folderListView && self.folderListView.checked) {
+                self.folderListView.checked.forEach((cid) => {
+                    const folder = self.folderListView.collection.get(cid);
+                    if (folder) { checkedFolderIds.push(folder.id); }
+                });
+            }
+            if (self.itemListView && self.itemListView.checked) {
+                self.itemListView.checked.forEach((cid) => {
+                    const item = self.itemListView.collection.get(cid);
+                    if (item) { checkedItemIds.push(item.id); }
+                });
+            }
             showTridentEmbeddingsDialog({
                 folderId: parentModel.id,
-                resourceType: parentModel.resourceName
+                resourceType: parentModel.resourceName,
+                checkedItemIds: checkedItemIds.length ? checkedItemIds : null,
+                checkedFolderIds: checkedFolderIds.length ? checkedFolderIds : null
             });
         });
         const $upload = self.$('.g-upload-here-button');
