@@ -1,4 +1,7 @@
+import mimetypes
 import os
+import threading
+import traceback
 
 from girder import logger
 from girder.api import access
@@ -11,6 +14,7 @@ from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
 from girder.models.setting import Setting
+from girder.models.upload import Upload
 from girder.utility import assetstore_utilities
 from girder.utility.model_importer import ModelImporter
 
@@ -67,6 +71,281 @@ def _collect_items_recursive(folder, user):
     for subfolder in Folder().childFolders(parent=folder, parentType='folder', user=user):
         items.extend(_collect_items_recursive(subfolder, user))
     return items
+
+
+def _export_dicomweb_item_as_tiff(item, wsi_dir):
+    """
+    Export a DICOMweb-backed Girder item as a pyramidal TIFF into *wsi_dir*.
+
+    Strategy: download every instance of the series via DICOMweb to a temp
+    directory, then convert with large_image_converter (which uses wsidicom
+    locally and auto-discovers sibling instances in the same dir). Cleans up
+    the temp dir afterward.
+
+    Returns the output path on success, or None if the item cannot be exported.
+    """
+    import shutil
+    import tempfile
+
+    import requests
+
+    try:
+        from large_image_source_dicom.assetstore import DICOMWEB_META_KEY
+        from girder.models.assetstore import Assetstore as _Assetstore
+
+        files = list(Item().childFiles(item))
+        if not files:
+            return None
+        dicom_uids = files[0].get('dicom_uids')
+        if not dicom_uids:
+            return None
+
+        store = _Assetstore().load(files[0]['assetstoreId'])
+        meta = store.get(DICOMWEB_META_KEY) or {}
+        base_url = meta.get('url', '')
+        token = meta.get('auth_token', '')
+        study_uid = dicom_uids.get('study_uid', '')
+        series_uid = dicom_uids.get('series_uid', '')
+        if not (base_url and study_uid and series_uid):
+            return None
+
+        out_path = os.path.join(wsi_dir, item['name'] + '.tiff')
+        if os.path.exists(out_path):
+            return out_path
+
+        from dicomweb_client.api import DICOMwebClient
+        session = requests.Session()
+        if token:
+            session.headers['Authorization'] = f'Bearer {token}'
+        client = DICOMwebClient(
+            url=base_url,
+            qido_url_prefix=meta.get('qido_prefix'),
+            wado_url_prefix=meta.get('wado_prefix'),
+            session=session,
+        )
+
+        tmp_dir = tempfile.mkdtemp(prefix='trident_dicom_', dir=wsi_dir)
+        try:
+            for f in files:
+                instance_uid = (f.get('dicom_uids') or {}).get('instance_uid')
+                if not instance_uid:
+                    continue
+                dataset = client.retrieve_instance(study_uid, series_uid, instance_uid)
+                dest = os.path.join(tmp_dir, f['name'])
+                dataset.save_as(dest, write_like_original=False)
+
+            staged = sorted(os.listdir(tmp_dir))
+            if not staged:
+                logger.warning(
+                    'DICOMweb TIFF export for %s: no instances retrieved.',
+                    item.get('name'),
+                )
+                return None
+
+            import large_image_converter
+            large_image_converter.convert(
+                os.path.join(tmp_dir, staged[0]),
+                out_path,
+                overwrite=True,
+                compression='jpeg',
+                quality=85,
+            )
+            return out_path
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 401:
+            logger.warning(
+                'DICOMweb TIFF export for %s failed with 401 Unauthorized. '
+                'The assetstore auth token has likely expired; refresh it via '
+                'POST /api/v1/dicom_import/refresh_token with a fresh '
+                '`gcloud auth print-access-token`.',
+                item.get('name'),
+            )
+        else:
+            logger.warning('DICOMweb TIFF export failed for %s: %s', item.get('name'), exc)
+        return None
+    except Exception as exc:
+        logger.warning('DICOMweb TIFF export failed for %s: %s', item.get('name'), exc)
+        return None
+
+
+def _resolve_trident_items(item_ids_param, folder_ids_param, resource, resource_type, user):
+    """Return the explicit list of items to stage, given dialog inputs."""
+    if item_ids_param or folder_ids_param:
+        items = []
+        if item_ids_param:
+            for iid in item_ids_param.split(','):
+                iid = iid.strip()
+                if iid:
+                    item = Item().load(iid, user=user, level=AccessType.READ, exc=False)
+                    if item:
+                        items.append(item)
+        if folder_ids_param:
+            for fid in folder_ids_param.split(','):
+                fid = fid.strip()
+                if fid:
+                    folder = Folder().load(fid, user=user, level=AccessType.READ, exc=False)
+                    if folder:
+                        items.extend(_collect_items_recursive(folder, user))
+        return items
+
+    if resource_type == 'folder':
+        return list(Folder().childItems(resource, user=user))
+
+    items = []
+    for folder in Folder().childFolders(
+            parent=resource, parentType=resource_type, user=user):
+        items.extend(Folder().childItems(folder, user=user))
+    return items
+
+
+def _stage_one_item(item, wsi_dir):
+    """Stage a single item into wsi_dir.
+
+    Returns one of: 'staged', 'skipped' (no usable file or symlink failed),
+    'skipped_dicomweb' (DICOMweb item where TIFF export failed).
+    """
+    files = list(Item().childFiles(item, limit=1))
+    if not files:
+        return 'skipped'
+    file = files[0]
+
+    src = None
+    try:
+        store = Assetstore().load(file['assetstoreId'])
+        adapter = assetstore_utilities.getAssetstoreAdapter(store)
+        src = adapter.fullPath(file)
+    except Exception:
+        pass
+
+    if src is None:
+        tiff_path = _export_dicomweb_item_as_tiff(item, wsi_dir)
+        return 'staged' if tiff_path else 'skipped_dicomweb'
+
+    dest = os.path.join(wsi_dir, item['name'])
+    if os.path.islink(dest) or os.path.exists(dest):
+        try:
+            os.remove(dest)
+        except OSError:
+            return 'skipped'
+    try:
+        os.symlink(src, dest)
+        return 'staged'
+    except OSError:
+        return 'skipped'
+
+
+def _run_trident_staging_job(job_id):
+    """Background worker for the TRIDENT staging Girder Job."""
+    from bson import ObjectId
+    from girder_jobs.constants import JobStatus
+    from girder_jobs.models.job import Job
+
+    job_model = Job()
+
+    def _reload():
+        return job_model.load(job_id, force=True)
+
+    def _log(msg):
+        job_model.updateJob(_reload(), log=msg + '\n', overwrite=False)
+
+    job = _reload()
+    try:
+        kwargs = _reload()['kwargs']
+        item_ids = kwargs['item_ids']
+        wsi_dir = kwargs['wsi_dir']
+        total = len(item_ids)
+
+        job_model.updateJob(
+            job, status=JobStatus.RUNNING,
+            progressTotal=total, progressCurrent=0,
+            progressMessage='Staging slides…',
+        )
+
+        staged = []
+        skipped = []
+        skipped_dicomweb = []
+        for idx, iid in enumerate(item_ids, 1):
+            item = Item().load(iid, force=True)
+            if not item:
+                skipped.append(iid)
+                _log(f'[{idx}/{total}] {iid}: item not found')
+                job_model.updateJob(
+                    _reload(), progressCurrent=idx,
+                    progressMessage=f'Skipped {iid} (not found)',
+                )
+                continue
+            name = item.get('name') or iid
+            job_model.updateJob(
+                _reload(), progressCurrent=idx - 1,
+                progressMessage=f'Staging {name}…',
+            )
+            outcome = _stage_one_item(item, wsi_dir)
+            _log(f'[{idx}/{total}] {name}: {outcome}')
+            job_model.updateJob(
+                _reload(), progressCurrent=idx,
+                progressMessage=f'{name}: {outcome}',
+            )
+            if outcome == 'staged':
+                staged.append(name)
+            elif outcome == 'skipped_dicomweb':
+                skipped_dicomweb.append(name)
+            else:
+                skipped.append(name)
+
+        summary = (
+            f'Done. {len(staged)} staged, {len(skipped)} skipped, '
+            f'{len(skipped_dicomweb)} DICOMweb export failures.'
+        )
+        _log(summary)
+        # Stash the result on `meta` (filtered through to the REST response,
+        # unlike custom top-level fields which are stripped by @filtermodel).
+        final_job = _reload()
+        meta = final_job.get('meta') or {}
+        meta['trident_staging_result'] = {
+            'staged': staged,
+            'skipped': skipped,
+            'skipped_dicomweb': skipped_dicomweb,
+        }
+        final_job['meta'] = meta
+        Job().save(final_job)
+
+        final_status = JobStatus.SUCCESS if staged else JobStatus.ERROR
+        job_model.updateJob(
+            _reload(), status=final_status,
+            progressMessage=summary,
+        )
+
+    except Exception:
+        job_model.updateJob(
+            _reload(), status=JobStatus.ERROR,
+            log=traceback.format_exc(), overwrite=False,
+        )
+
+
+def _ensure_folder_path(rel_path, root_folder, user):
+    """
+    Walk *rel_path* (e.g. '5x_512px_0px_overlap/features_conch_v15') and
+    create any missing Girder folders under *root_folder*, returning the
+    deepest folder.
+    """
+    parts = rel_path.replace('\\', '/').split('/')
+    current = root_folder
+    for part in parts:
+        if not part or part == '.':
+            continue
+        children = list(Folder().childFolders(
+            parent=current, parentType='folder', user=user,
+            filters={'name': part}, limit=1))
+        if children:
+            current = children[0]
+        else:
+            current = Folder().createFolder(
+                parent=current, name=part, creator=user,
+                parentType='folder', reuseExisting=True)
+    return current
 
 
 # Ordered list of known TRIDENT patch encoder IDs and display labels.
@@ -151,6 +430,7 @@ class HistomicsUIResource(Resource):
         self.route('GET', ('trident', 'encoders'), self.listTridentEncoders)
         self.route('GET', ('trident', 'stage'), self.stageTridentJob)
         self.route('POST', ('trident', 'stage'), self.stageTridentJob)
+        self.route('POST', ('trident', 'import'), self.importTridentResults)
 
     @describeRoute(
         Description('Get public settings for HistomicsUI.'),
@@ -419,65 +699,104 @@ class HistomicsUIResource(Resource):
                 code=500,
             )
 
-        item_ids_param = params.get('itemIds', '')
-        folder_ids_param = params.get('folderIds', '')
+        items = _resolve_trident_items(
+            params.get('itemIds', ''),
+            params.get('folderIds', ''),
+            resource, resource_type, user,
+        )
 
-        if item_ids_param or folder_ids_param:
-            # Process only the explicitly selected items and/or folders.
-            items = []
-            if item_ids_param:
-                for iid in item_ids_param.split(','):
-                    iid = iid.strip()
-                    if iid:
-                        item = Item().load(iid, user=user, level=AccessType.READ, exc=False)
-                        if item:
-                            items.append(item)
-            if folder_ids_param:
-                for fid in folder_ids_param.split(','):
-                    fid = fid.strip()
-                    if fid:
-                        folder = Folder().load(fid, user=user, level=AccessType.READ, exc=False)
-                        if folder:
-                            items.extend(_collect_items_recursive(folder, user))
-        else:
-            # No explicit selection — process all items under the resource.
-            if resource_type == 'folder':
-                items = list(Folder().childItems(resource, user=user))
-            else:
-                # collection or user: gather items from all immediate child folders.
-                items = []
-                for folder in Folder().childFolders(
-                        parent=resource, parentType=resource_type, user=user):
-                    items.extend(Folder().childItems(folder, user=user))
+        from girder_jobs.constants import JobStatus
+        from girder_jobs.models.job import Job
 
-        staged = []
-        skipped = []
-        for item in items:
-            files = list(Item().childFiles(item, limit=1))
-            if not files:
-                skipped.append(item['name'])
-                continue
-            file = files[0]
-            try:
-                store = Assetstore().load(file['assetstoreId'])
-                adapter = assetstore_utilities.getAssetstoreAdapter(store)
-                src = adapter.fullPath(file)
-            except Exception:
-                skipped.append(item['name'])
-                continue
+        job = Job().createJob(
+            title=f'TRIDENT staging ({len(items)} item{"s" if len(items) != 1 else ""})',
+            type='trident_staging',
+            user=user,
+            public=False,
+        )
+        Job().updateJob(job, status=JobStatus.QUEUED, log=(
+            f'Staging {len(items)} item(s) into {wsi_dir}\n'
+        ), overwrite=True)
+        job['kwargs'] = {
+            'item_ids': [str(it['_id']) for it in items],
+            'user_id': str(user['_id']),
+            'wsi_dir': wsi_dir,
+            'job_dir': job_dir,
+        }
+        Job().save(job)
 
-            dest = os.path.join(wsi_dir, item['name'])
-            if os.path.islink(dest) or os.path.exists(dest):
-                os.remove(dest)
-            try:
-                os.symlink(src, dest)
-                staged.append(item['name'])
-            except OSError:
-                skipped.append(item['name'])
+        t = threading.Thread(target=_run_trident_staging_job, args=(job['_id'],), daemon=True)
+        t.start()
 
         return {
             'wsi_dir': wsi_dir,
             'job_dir': job_dir,
-            'staged': staged,
-            'skipped': skipped,
+            'jobId': str(job['_id']),
+            'totalItems': len(items),
         }
+
+    @describeRoute(
+        Description('Import TRIDENT output files from the filesystem into a Girder folder.')
+        .param('jobDir', 'Path to the TRIDENT job output directory (must be under '
+               '/Export/Shared/DSA/TRIDENT).')
+        .param('folderId', 'Girder folder ID to import results into.')
+        .errorResponse('Access denied or invalid path.', 403),
+    )
+    @access.user(scope=TokenScope.DATA_WRITE)
+    def importTridentResults(self, params):
+        user = self.getCurrentUser()
+        job_dir = params.get('jobDir', '').rstrip('/')
+        folder_id = params.get('folderId')
+
+        staging_base = '/Export/Shared/DSA/TRIDENT'
+        if not job_dir or not os.path.realpath(job_dir).startswith(
+                os.path.realpath(staging_base) + os.sep):
+            raise RestException(
+                f'jobDir must be a path under {staging_base}.', code=400)
+        if not os.path.isdir(job_dir):
+            raise RestException(f'jobDir does not exist: {job_dir}', code=400)
+
+        folder = Folder().load(folder_id, user=user, level=AccessType.WRITE, exc=True)
+
+        # Filesystem assetstore for registering files in-place.
+        fs_store = Assetstore().findOne({'type': 0})
+        if fs_store is None:
+            raise RestException('No filesystem assetstore found.', code=500)
+        fs_adapter = assetstore_utilities.getAssetstoreAdapter(fs_store)
+
+        imported = []
+        skipped = []
+
+        for dirpath, dirnames, filenames in os.walk(job_dir):
+            # Skip the wsi/ staging directory (symlinks to original slides).
+            dirnames[:] = [d for d in dirnames if d != 'wsi']
+
+            rel = os.path.relpath(dirpath, job_dir)
+            # Find or create the matching Girder (sub)folder.
+            if rel == '.':
+                target_folder = folder
+            else:
+                target_folder = _ensure_folder_path(rel, folder, user)
+
+            for fname in filenames:
+                fpath = os.path.join(dirpath, fname)
+                if os.path.islink(fpath):
+                    skipped.append(fname if rel == '.' else os.path.join(rel, fname))
+                    continue
+                try:
+                    item = Item().createItem(
+                        name=fname,
+                        creator=user,
+                        folder=target_folder,
+                        reuseExisting=True,
+                    )
+                    mime = mimetypes.guess_type(fname)[0] or 'application/octet-stream'
+                    fs_adapter.importFile(item, fpath, user, name=fname, mimeType=mime)
+                    path_label = fname if rel == '.' else os.path.join(rel, fname)
+                    imported.append(path_label)
+                except Exception as exc:
+                    logger.warning('Failed to import %s: %s', fpath, exc)
+                    path_label = fname if rel == '.' else os.path.join(rel, fname)
+                    skipped.append(path_label)
+
+        return {'imported': imported, 'skipped': skipped}

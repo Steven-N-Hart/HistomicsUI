@@ -344,21 +344,29 @@ const TridentEmbeddingsView = Backbone.View.extend({
             data: stageData,
             error: null
         }).then((staging) => {
-            this.$('.h-trident-submit').text('Submitting…');
+            const total = staging.totalItems || 0;
+            this.$('.h-trident-submit').text(`Staging 0/${total}…`);
+            return this._waitForStagingJob(staging.jobId, total).then((staged) => {
+                this.$('.h-trident-submit').text('Submitting…');
 
-            const params = this._collectParams();
-            params.wsi_dir = staging.wsi_dir;
-            params.job_dir = staging.job_dir;
+                const params = this._collectParams();
+                params.wsi_dir = staging.wsi_dir;
+                params.job_dir = staging.job_dir;
 
-            if (staging.skipped && staging.skipped.length) {
-                console.warn('TRIDENT staging: skipped items', staging.skipped);
-            }
+                if (staged.skipped && staged.skipped.length) {
+                    console.warn('TRIDENT staging: skipped items', staged.skipped);
+                }
+                if (staged.skipped_dicomweb && staged.skipped_dicomweb.length) {
+                    console.warn('TRIDENT staging: DICOMweb export failures',
+                        staged.skipped_dicomweb);
+                }
 
-            return restRequest({
-                url: `slicer_cli_web/cli/${this._cliId}/run`,
-                method: 'POST',
-                data: params,
-                error: null
+                return restRequest({
+                    url: `slicer_cli_web/cli/${this._cliId}/run`,
+                    method: 'POST',
+                    data: params,
+                    error: null
+                });
             });
         }).done((job) => {
             this.$('.modal').modal('hide');
@@ -381,6 +389,47 @@ const TridentEmbeddingsView = Backbone.View.extend({
             const msg = ((resp.responseJSON || {}).message) || resp.statusText || 'Unknown error';
             this._showError('Failed: ' + msg);
         });
+    },
+
+    _waitForStagingJob(jobId, total) {
+        // Girder JobStatus: INACTIVE=0, QUEUED=1, RUNNING=2, SUCCESS=3, ERROR=4, CANCELED=5
+        const TERMINAL = {3: 'success', 4: 'error', 5: 'canceled'};
+        const POLL_MS = 2000;
+        const deferred = $.Deferred();
+
+        const tick = () => {
+            restRequest({url: `job/${jobId}`, error: null}).done((job) => {
+                try {
+                    const status = job.status;
+                    const progress = job.progress || {};
+                    const done = progress.current || 0;
+                    if (!TERMINAL[status]) {
+                        this.$('.h-trident-submit').text(`Staging ${done}/${total}…`);
+                        setTimeout(tick, POLL_MS);
+                        return;
+                    }
+                    const result = (job.meta || {}).trident_staging_result || {};
+                    if (TERMINAL[status] === 'success') {
+                        deferred.resolve(result);
+                    } else {
+                        deferred.reject({
+                            responseJSON: {message: `Staging job ${TERMINAL[status]}.` +
+                                ' See job log for details: #jobs/' + jobId}
+                        });
+                    }
+                } catch (err) {
+                    console.error('TRIDENT staging poll error', err, job);
+                    deferred.reject({
+                        responseJSON: {message: 'Staging poll error: ' + err.message}
+                    });
+                }
+            }).fail((resp) => {
+                console.error('TRIDENT staging poll request failed', resp);
+                deferred.reject(resp);
+            });
+        };
+        tick();
+        return deferred.promise();
     },
 
     _showError(msg) {
