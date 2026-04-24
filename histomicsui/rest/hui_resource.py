@@ -287,6 +287,13 @@ def _run_trident_staging_job(job_id):
             else:
                 skipped.append(name)
 
+        if skipped_dicomweb:
+            _log(
+                f'WARNING: {len(skipped_dicomweb)} DICOMweb slide(s) failed to export. '
+                'The stored GCP Bearer token has likely expired. '
+                'Refresh it via POST /api/v1/dicom_import/refresh_token '
+                'or use the "Refresh Token" dialog in the DSA UI.'
+            )
         summary = (
             f'Done. {len(staged)} staged, {len(skipped)} skipped, '
             f'{len(skipped_dicomweb)} DICOMweb export failures.'

@@ -1790,23 +1790,31 @@ var ImageView = View.extend({
                         } else {
                             const yamlIds = new Set(val.annotationGroups.groups.map((g) => g.id));
                             groups.models.slice().forEach((model) => {
-                                if (!yamlIds.has(model.id)) {
+                                if (!yamlIds.has(model.id) && model.id !== this._defaultGroup) {
                                     model.destroy();
                                 }
                             });
                         }
                         val.annotationGroups.groups.forEach((group) => {
-                            if (!group.group) {
-                                group.group = group.id;
-                            }
-                            group.label = group.label ? {value: group.label} : undefined;
-                            groups.add(group);
+                            const rawLabel = group.label && typeof group.label === 'object'
+                                ? group.label.value : group.label;
+                            const styleGroup = Object.assign({}, group, {
+                                group: group.group || group.id,
+                                label: rawLabel ? {value: rawLabel} : undefined
+                            });
+                            groups.add(styleGroup);
                         });
                         groups.each((model) => { model.save(); });
                     }
                     if (this.annotationSelector) {
                         this.annotationSelector._treeInitialized = false;
                         this.annotationSelector._debounceRender();
+                    }
+                    if (this.drawWidget) {
+                        this.drawWidget._groups.fetch().done(() => {
+                            this.drawWidget.render();
+                        });
+                        this.trigger('h:styleGroupsEdited', this.drawWidget._groups);
                     }
                 });
             } else if (this.annotationSelector) {

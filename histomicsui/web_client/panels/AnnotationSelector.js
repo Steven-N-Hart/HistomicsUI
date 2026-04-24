@@ -37,6 +37,7 @@ var AnnotationSelector = Panel.extend({
         'input #h-annotation-fill-opacity': '_changeGlobalFillOpacity',
         'click .h-annotation-select-by-region': 'selectAnnotationByRegion',
         'click .h-annotation-group-name': '_toggleExpandGroup',
+        'click .h-toggle-class': '_toggleClass',
         'click .h-class-header': '_handleClassClick',
         'click .h-class-tree-toggle': '_toggleTreeNode',
         'click .h-edit-taxonomy': '_openEditTaxonomyDialog'
@@ -52,6 +53,8 @@ var AnnotationSelector = Panel.extend({
      */
     initialize(settings = {}) {
         this._expandedGroups = new Set();
+        this._hiddenGroups = new Set();
+        this._annotationToGroups = new Map();
         this._activeGroup = null;
         this._opacity = settings.opacity || 0.9;
         this._fillOpacity = settings.fillOpacity || 1.0;
@@ -123,6 +126,7 @@ var AnnotationSelector = Panel.extend({
                 expandedGroups: this._expandedGroups,
                 annotationGroups,
                 groupTree,
+                hiddenGroups: this._hiddenGroups,
                 annotationAccess: this._annotationAccess,
                 collapsed: this.$('.s-panel-content.collapse').length && !this.$('.s-panel-content').hasClass('in'),
                 _
@@ -162,6 +166,7 @@ var AnnotationSelector = Panel.extend({
         this.parentItem = item;
         this._parentId = item.id;
         this._activeGroup = null;
+        this._hiddenGroups = new Set();
         this._treeInitialized = false;
         delete this._setCreationRequest;
         delete this._annotationAccess;
@@ -456,11 +461,24 @@ var AnnotationSelector = Panel.extend({
 
     createAnnotation(evt) {
         const groupTree = this._buildGroupTree();
-        if (groupTree) {
-            this._createAnnotationWithClass(groupTree);
-        } else {
-            this._createAnnotationDefault();
+        if (groupTree && this._activeGroup) {
+            const node = this._findNodeInTree(groupTree, this._activeGroup);
+            if (node) {
+                const model = new AnnotationModel({
+                    itemId: this.parentItem.id,
+                    annotation: {name: node.label, display: {visible: true}}
+                });
+                this._norefresh = true;
+                model.save().done(() => {
+                    model.set('displayed', true);
+                    this.collection.add(model);
+                    this.trigger('h:editAnnotation', model);
+                    this._activeAnnotation = model;
+                });
+                return;
+            }
         }
+        this._createAnnotationDefault();
     },
 
     _createAnnotationDefault() {
@@ -481,64 +499,6 @@ var AnnotationSelector = Panel.extend({
                 });
             }
         );
-    },
-
-    _createAnnotationWithClass(groupTree) {
-        const allNodes = [];
-        const flatten = (nodes) => nodes.forEach((n) => { allNodes.push(n); flatten(n.children); });
-        flatten(groupTree);
-
-        const radioItems = allNodes.map((n, i) => {
-            const swatch = `display:inline-block;width:12px;height:12px;background:${n.fillColor};border:2px solid ${n.lineColor};border-radius:2px;margin-right:6px;vertical-align:middle`;
-            const checked = (n.id === this._activeGroup || (!this._activeGroup && i === 0)) ? 'checked' : '';
-            return `<div class="radio" style="margin:4px 0"><label><input type="radio" name="h-class-pick" value="${n.id}" ${checked}><span style="${swatch}"></span>${_.escape(n.label)}</label></div>`;
-        }).join('');
-
-        const $modal = $(`
-            <div class="modal fade" tabindex="-1" role="dialog">
-              <div class="modal-dialog" role="document">
-                <div class="modal-content">
-                  <div class="modal-header">
-                    <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
-                    <h4 class="modal-title">New annotation &mdash; select class</h4>
-                  </div>
-                  <div class="modal-body">${radioItems}</div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary h-class-pick-ok">Create &amp; Draw</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-        `).appendTo('body');
-
-        let confirmed = false;
-        $modal.find('.h-class-pick-ok').on('click', () => {
-            confirmed = true;
-            $modal.modal('hide');
-        });
-
-        $modal.on('hidden.bs.modal', () => {
-            const groupId = $modal.find('input[name="h-class-pick"]:checked').val();
-            $modal.remove();
-            if (!confirmed || !groupId) { return; }
-            const node = this._findNodeInTree(groupTree, groupId);
-            this._setActiveGroup(groupId);
-            const name = node ? node.label : 'Annotations';
-            const model = new AnnotationModel({
-                itemId: this.parentItem.id,
-                annotation: {name, display: {visible: true}}
-            });
-            this._norefresh = true;
-            model.save().done(() => {
-                model.set('displayed', true);
-                this.collection.add(model);
-                this.trigger('h:editAnnotation', model);
-                this._activeAnnotation = model;
-            });
-        });
-
-        $modal.modal('show');
     },
 
     _saveAnnotation(annotation, options) {
@@ -635,6 +595,7 @@ var AnnotationSelector = Panel.extend({
 
     showAllAnnotations() {
         this._showAllAnnotationsState = true;
+        this._hiddenGroups.clear();
         this.collection.each((model) => {
             model.set('displayed', true);
         });
@@ -767,7 +728,7 @@ var AnnotationSelector = Panel.extend({
             this.parentView._folderConfig.annotationGroups &&
             this.parentView._folderConfig.annotationGroups.groups
         ) || null;
-        if (!configGroups || !configGroups.some((g) => g.parent)) {
+        if (!configGroups || !configGroups.length) {
             return null;
         }
 
@@ -778,21 +739,52 @@ var AnnotationSelector = Panel.extend({
             const elems = liveModels.length > 0
                 ? liveModels.map((e) => ({group: e.get('group')}))
                 : (model.get('annotation') || {}).elements || [];
-            elems.forEach((e) => {
-                const g = e.group != null ? e.group : 'Other';
-                counts[g] = (counts[g] || 0) + 1;
+            // If the annotation name matches a config group, bind the whole
+            // annotation to that group so toggling is decoupled per annotation.
+            const name = (model.get('annotation') || {}).name;
+            const nameMatched = configGroups.find((g) => {
+                let lbl = g.label;
+                while (lbl && typeof lbl === 'object') { lbl = lbl.value; }
+                return (lbl || g.id) === name || g.id === name;
+            });
+            if (nameMatched) {
+                const g = nameMatched.id;
+                counts[g] = (counts[g] || 0) + Math.max(elems.length, 1);
                 if (!annosByGroup[g]) {
                     annosByGroup[g] = [];
                 }
                 if (!annosByGroup[g].includes(model)) {
                     annosByGroup[g].push(model);
                 }
+            } else {
+                // No name match — fall back to grouping by each element's group.
+                elems.forEach((e) => {
+                    const g = e.group != null ? e.group : 'Other';
+                    counts[g] = (counts[g] || 0) + 1;
+                    if (!annosByGroup[g]) {
+                        annosByGroup[g] = [];
+                    }
+                    if (!annosByGroup[g].includes(model)) {
+                        annosByGroup[g].push(model);
+                    }
+                });
+            }
+        });
+
+        this._annotationToGroups = new Map();
+        Object.keys(annosByGroup).forEach((g) => {
+            annosByGroup[g].forEach((model) => {
+                if (!this._annotationToGroups.has(model.id)) {
+                    this._annotationToGroups.set(model.id, new Set());
+                }
+                this._annotationToGroups.get(model.id).add(g);
             });
         });
 
         const nodeMap = {};
         configGroups.forEach((g) => {
-            const rawLabel = g.label && typeof g.label === 'object' ? g.label.value : g.label;
+            let rawLabel = g.label;
+            while (rawLabel && typeof rawLabel === 'object') { rawLabel = rawLabel.value; }
             nodeMap[g.id] = {
                 id: g.id,
                 label: rawLabel || g.id,
@@ -884,8 +876,33 @@ var AnnotationSelector = Panel.extend({
         this._drawWidget._setStyleGroup(style.toJSON());
     },
 
+    _toggleClass(evt) {
+        evt.stopPropagation();
+        const groupId = $(evt.currentTarget).data('groupId');
+        const node = this._groupTree ? this._findNodeInTree(this._groupTree, groupId) : null;
+        if (!node) { return; }
+        const nowHiding = !this._hiddenGroups.has(groupId);
+        if (nowHiding) {
+            this._hiddenGroups.add(groupId);
+        } else {
+            this._hiddenGroups.delete(groupId);
+        }
+        this._showAllAnnotationsState = false;
+        node.annotations.forEach((a) => {
+            if (nowHiding) {
+                a.set('displayed', false);
+            } else {
+                // Only restore if none of this annotation's groups are still hidden.
+                const modelGroups = this._annotationToGroups.get(a.id) || new Set([groupId]);
+                if ([...modelGroups].every((g) => !this._hiddenGroups.has(g))) {
+                    a.set('displayed', true);
+                }
+            }
+        });
+    },
+
     _handleClassClick(evt) {
-        if ($(evt.target).closest('.h-class-tree-toggle, .h-class-expand-annotations').length) {
+        if ($(evt.target).closest('.h-class-tree-toggle, .h-class-expand-annotations, .h-toggle-class').length) {
             return;
         }
         const groupId = $(evt.currentTarget).closest('.h-class-node').data('groupId');
@@ -918,6 +935,15 @@ var AnnotationSelector = Panel.extend({
             const already = this._activeAnnotation && this._activeAnnotation.id === annotation.id;
             if (!already) {
                 this.editAnnotation(annotation);
+            }
+        } else {
+            // No annotation exists for this class yet — deactivate editing so the
+            // user must click "+ New" before drawing, preventing elements from
+            // being added to a different class's annotation.
+            if (this._activeAnnotation) {
+                this._activeAnnotation = null;
+                this.trigger('h:editAnnotation', null);
+                this._debounceRender();
             }
         }
     },

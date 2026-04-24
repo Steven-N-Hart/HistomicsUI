@@ -368,13 +368,32 @@ const TridentEmbeddingsView = Backbone.View.extend({
                 if (staged.skipped_dicomweb && staged.skipped_dicomweb.length) {
                     console.warn('TRIDENT staging: DICOMweb export failures',
                         staged.skipped_dicomweb);
+                    events.trigger('g:alert', {
+                        icon: 'attention',
+                        text: `${staged.skipped_dicomweb.length} DICOMweb slide(s) could not be staged — ` +
+                              'the stored GCP Bearer token has likely expired. ' +
+                              'Use "Import from DICOM store → Refresh Token" to update it, then retry.',
+                        type: 'warning',
+                        timeout: 15000
+                    });
+                    if (!staged.staged || !staged.staged.length) {
+                        return $.Deferred().reject({
+                            responseJSON: {message: 'All slides failed to stage due to an expired DICOMweb token. Refresh the token and try again.'}
+                        }).promise();
+                    }
                 }
+
+                // Extract the token string in case getCurrentToken returns an object.
+                const rawToken = getCurrentToken();
+                const tokenStr = (rawToken && typeof rawToken === 'object')
+                    ? (rawToken.token || '')
+                    : (rawToken || '');
 
                 const params = Object.assign({}, formParams, {
                     wsi_dir: staging.wsi_dir,
                     job_dir: staging.job_dir,
                     girderApiUrl: getApiRoot(),
-                    girderToken: getCurrentToken()
+                    girderToken: tokenStr
                 });
                 // Pass the staged item IDs so the CLI's _stage_slides_from_girder
                 // builds the stem→item_id map needed to post annotations and

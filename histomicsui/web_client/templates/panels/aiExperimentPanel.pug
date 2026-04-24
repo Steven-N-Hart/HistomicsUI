@@ -1,0 +1,90 @@
+.panel.panel-default.h-ai-experiment-panel
+  .panel-heading(style='cursor:pointer', data-toggle='collapse', data-target='#h-ai-experiment-body')
+    span.panel-title
+      | AI Experiment
+      if experiment
+        span.label.label-info.pull-right(style='margin-top:2px; font-size:11px; font-weight:normal') Configured
+  #h-ai-experiment-body.panel-collapse.collapse.in
+    .panel-body
+      if loading
+        p.text-muted
+          i.icon-spin.icon-spin-animate
+          |  Loading…
+
+      else if !experiment
+        p.text-muted No experiment configured for this folder.
+        button.btn.btn-primary.btn-sm.h-ai-setup-btn
+          i.icon-cog
+          |  Set Up Experiment
+
+      else
+        table.table.table-condensed(style='margin-bottom:8px')
+          tbody
+            tr
+              th(style='width:90px') Targets
+              td= experiment.targets.join(', ')
+            tr
+              th Scope
+              if experiment.scope === 'roi'
+                td= 'ROI — "' + experiment.roiAnnotation + '"'
+              else
+                td Whole slide
+
+        .h-ai-split-counts(style='margin-bottom:8px')
+          span.label.label-primary= 'Train: ' + splitCounts.train
+          = ' '
+          span.label.label-warning= 'Test: ' + splitCounts.test
+          if splitCounts.val > 0
+            = ' '
+            span.label.label-success= 'Val: ' + splitCounts.val
+          = ' '
+          span.label.label-default= 'Unassigned: ' + splitCounts.unassigned
+
+        if selectedCount > 0
+          .h-ai-assign-section(style='margin-bottom:8px')
+            span.text-muted(style='margin-right:6px')= selectedCount + ' selected — Assign to:'
+            = ' '
+            button.btn.btn-xs.btn-primary.h-ai-assign-btn(data-split='train') Train
+            = ' '
+            button.btn.btn-xs.btn-warning.h-ai-assign-btn(data-split='test') Test
+            = ' '
+            button.btn.btn-xs.btn-success.h-ai-assign-btn(data-split='val') Val
+            = ' '
+            button.btn.btn-xs.btn-default.h-ai-assign-btn(data-split='') Unassign
+
+        if validation
+          .h-ai-validation(style='margin-bottom:8px')
+            p.text-muted.small(style='margin-bottom:4px')= 'Last validated: ' + validation.checkedAt
+            ul.list-unstyled(style='margin-bottom:0')
+              each targetName in experiment.targets
+                - var missing = (validation.missingTargets || {})[targetName] || []
+                li
+                  if missing.length
+                    i.icon-attention.text-warning
+                    = ' "' + targetName + '": ' + missing.length + ' missing '
+                    a.h-ai-show-missing(data-key=targetName, href='#') show
+                  else
+                    i.icon-ok.text-success
+                    = ' "' + targetName + '": all present'
+              if experiment.scope === 'roi'
+                - var missingRoi = (validation.missingRoi) || []
+                li
+                  if missingRoi.length
+                    i.icon-attention.text-warning
+                    = ' ROI "' + experiment.roiAnnotation + '": ' + missingRoi.length + ' missing '
+                    a.h-ai-show-missing(data-key='__roi__', href='#') show
+                  else
+                    i.icon-ok.text-success
+                    = ' ROI "' + experiment.roiAnnotation + '": all present'
+
+        .h-ai-actions
+          button.btn.btn-default.btn-xs.h-ai-edit-btn
+            i.icon-pencil
+            |  Edit
+          = ' '
+          button.btn.btn-default.btn-xs.h-ai-validate-btn(disabled=validating ? 'disabled' : undefined)
+            if validating
+              | Validating…
+            else
+              i.icon-ok-circled
+              |  Validate

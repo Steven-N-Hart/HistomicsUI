@@ -8,6 +8,7 @@ import HierarchyWidget from '@girder/core/views/widgets/HierarchyWidget';
 import ItemCollection from '@girder/core/collections/ItemCollection';
 
 import showTridentEmbeddingsDialog from '../dialogs/tridentEmbeddings';
+import AIExperimentPanel from '../panels/AIExperimentPanel';
 
 let _tridentCliAvailable = null; // null = unchecked, true/false = resolved
 
@@ -166,10 +167,48 @@ wrap(HierarchyWidget, 'render', function (render) {
         }
 
         if (self.folderListView) {
-            self.listenTo(self.folderListView, 'change:checked', updateDeleteBtnVisibility);
+            self.listenTo(self.folderListView, 'g:checkboxesChanged', updateDeleteBtnVisibility);
         }
         if (self.itemListView) {
-            self.listenTo(self.itemListView, 'change:checked', updateDeleteBtnVisibility);
+            self.listenTo(self.itemListView, 'g:checkboxesChanged', updateDeleteBtnVisibility);
+        }
+    }
+
+    // AI Experiment panel — folder context only
+    if (parentModel.resourceName === 'folder') {
+        if (self._aiExperimentPanel) {
+            self._aiExperimentPanel.remove();
+            self._aiExperimentPanel = null;
+        }
+
+        const $container = $('<div class="h-ai-experiment-container" style="margin:16px 8px 0"></div>');
+        self.$el.append($container);
+
+        self._aiExperimentPanel = new AIExperimentPanel({
+            el: $container[0],
+            folderId: parentModel.id,
+            accessLevel: parentModel.get('_accessLevel')
+        });
+        self._aiExperimentPanel.render();
+
+        const syncChecked = () => {
+            const ids = [];
+            if (self.itemListView && self.itemListView.checked) {
+                console.log('[AIExperiment] syncChecked fired, checked cids:', self.itemListView.checked);
+                self.itemListView.checked.forEach((cid) => {
+                    const item = self.itemListView.collection.get(cid);
+                    if (item) { ids.push(item.id); }
+                });
+            } else {
+                console.log('[AIExperiment] syncChecked fired but itemListView or checked missing', self.itemListView);
+            }
+            if (self._aiExperimentPanel) {
+                self._aiExperimentPanel.setCheckedItems(ids);
+            }
+        };
+
+        if (self.itemListView) {
+            self.listenTo(self.itemListView, 'g:checkboxesChanged', syncChecked);
         }
     }
 

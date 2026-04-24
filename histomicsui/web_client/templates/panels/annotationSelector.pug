@@ -64,6 +64,7 @@ block content
     - var treeExpanded = expandedGroups.has(treeKey)
     - var annoExpanded = expandedGroups.has(node.id)
     - var isActive = node.id === activeGroup
+    - var anyVisible = !hiddenGroups.has(node.id)
     .h-class-node(data-group-id=node.id, class=isActive ? 'h-active-class' : '')
       .h-class-header
         if node.children.length
@@ -77,6 +78,10 @@ block content
             style=`background:${node.fillColor}; border: 2px solid ${node.lineColor}`)
         span.h-class-name(title='Click row to draw as this class') #{node.label}
         span.h-class-count.badge(class=node.count === 0 ? 'h-count-zero' : '')= node.count
+        span.h-toggle-class(
+            data-group-id=node.id,
+            title=anyVisible ? 'Hide class' : 'Show class')
+          i(class=anyVisible ? 'icon-eye' : 'icon-eye-off')
         if node.annotations.length
           span.h-class-expand-annotations.h-annotation-group-name(data-group-name=node.id)
             if annoExpanded
