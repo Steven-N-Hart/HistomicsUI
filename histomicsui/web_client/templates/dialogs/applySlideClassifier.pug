@@ -1,0 +1,41 @@
+.modal.fade(tabindex='-1', role='dialog')
+  .modal-dialog(role='document')
+    .modal-content
+      .modal-header
+        button.close(type='button', data-dismiss='modal', aria-label='Close')
+          span(aria-hidden='true') &times;
+        h4.modal-title Apply Slide Classifier
+
+      .modal-body
+        if experiment
+          p.text-muted.small(style='margin-bottom:12px')
+            | Experiment:
+            |
+            strong= experiment.name || '(unnamed)'
+            | &nbsp;&middot; Classes:
+            |
+            = (experiment.classes || []).join(', ')
+
+        .form-group
+          label(for='h-sc-model-path') Model Path
+          input#h-sc-model-path.form-control(type='text', name='model_path', value=defaultModelPath || '', placeholder='/Export/Shared/DSA/AI_EXPERIMENTS/…/model.pkl')
+          p.help-block.small Container-internal path to <code>model.pkl</code> produced by Build Slide Classifier.
+
+        .form-group
+          label(for='h-sc-target-folder') Target Folder ID
+          input#h-sc-target-folder.form-control(type='text', name='folder_id', placeholder='(leave empty to use current folder)')
+          p.help-block.small Girder folder ID of the slides to predict on. Defaults to the current folder.
+
+        .form-group
+          label(for='h-sc-apply-job-dir') Output Directory
+          input#h-sc-apply-job-dir.form-control(type='text', name='job_dir', value=defaultJobDir || '')
+          p.help-block.small Container-internal path where <code>predictions.json</code> will be written.
+
+        p.text-muted.small
+          | Predictions are written to each slide item as <code>meta._slideClassifierPrediction</code> (per-class probabilities).
+
+        .alert.alert-danger.hidden.h-sc-apply-error
+
+      .modal-footer
+        button.btn.btn-default(type='button', data-dismiss='modal') Cancel
+        button.btn.btn-primary.h-sc-apply-submit(type='button') Apply

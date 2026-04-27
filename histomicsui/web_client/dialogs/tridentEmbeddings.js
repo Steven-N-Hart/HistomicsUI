@@ -419,7 +419,7 @@ const TridentEmbeddingsView = Backbone.View.extend({
                 });
                 if (jobId) {
                     $('<div class="alert alert-info h-trident-job-link" style="position:fixed;bottom:60px;right:20px;z-index:9999;padding:10px 16px;">' +
-                        '<a href="#jobs/' + jobId + '">View TRIDENT job →</a>' +
+                        '<a href="#job/' + jobId + '">View TRIDENT job →</a>' +
                         '</div>').appendTo('body').delay(6000).fadeOut(400, function () {
                         $(this).remove();
                     });
@@ -463,7 +463,7 @@ const TridentEmbeddingsView = Backbone.View.extend({
                     } else {
                         deferred.reject({
                             responseJSON: {message: `Staging job ${TERMINAL[status]}.` +
-                                ' See job log for details: #jobs/' + jobId}
+                                ' See job log for details: #job/' + jobId}
                         });
                     }
                 } catch (err) {

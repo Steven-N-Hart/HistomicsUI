@@ -1,0 +1,103 @@
+.panel.panel-default.h-sc-panel
+  .panel-heading(style='cursor:pointer', data-toggle='collapse', data-target='#h-sc-body')
+    span.panel-title
+      | Slide Classifier
+      if experiment
+        span.label.label-info.pull-right(style='margin-top:2px; font-size:11px; font-weight:normal') Configured
+  #h-sc-body.panel-collapse.collapse.in
+    .panel-body
+      if loading
+        p.text-muted
+          i.icon-spin.icon-spin-animate
+          |  Loading…
+
+      else if !experiment
+        p.text-muted No slide classifier configured for this folder.
+        button.btn.btn-primary.btn-sm.h-sc-setup-btn
+          i.icon-cog
+          |  Set Up Classifier
+
+      else
+        .h-sc-split-counts(style='margin-bottom:4px')
+          span.label.label-primary= 'Train: ' + splitCounts.train
+          = ' '
+          span.label.label-warning= 'Test: ' + splitCounts.test
+          if splitCounts.val > 0
+            = ' '
+            span.label.label-success= 'Val: ' + splitCounts.val
+          = ' '
+          span.label.label-default= 'Unassigned: ' + splitCounts.unassigned
+
+        .h-sc-label-counts(style='margin-bottom:8px')
+          each cls in classes
+            span.label.label-default(style='margin-right:3px')= cls + ': ' + (labelCounts[cls] || 0)
+
+        if splitCounts.train < 2
+          .h-sc-run-warning.alert.alert-warning.small(style='padding:6px 10px;margin-bottom:8px')
+            i.icon-attention
+            |  At least 2 labeled training slides are required to train.
+        else
+          .h-sc-run-warning(style='display:none')
+
+        .table-responsive(style='margin-bottom:8px')
+          table.table.table-condensed.table-bordered.h-sc-table(style='font-size:12px;margin-bottom:0')
+            thead
+              tr
+                th(rowspan=2, style='vertical-align:middle') Slide
+                th(colspan=4, style='text-align:center;border-left:2px solid #aaa') Split
+                th(colspan=classes.length + 1, style='text-align:center;border-left:2px solid #aaa') Label (check all that apply)
+              tr
+                th(style='text-align:center;border-left:2px solid #aaa;font-weight:normal;color:#999') —
+                th(style='text-align:center') Train
+                th(style='text-align:center') Test
+                th(style='text-align:center') Val
+                th(style='border-left:2px solid #aaa')
+                each cls in classes
+                  th(style='text-align:center')= cls
+            tbody
+              each item in items
+                tr(class=item.split ? '' : 'text-muted')
+                  td(style='max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', title=item.name)= item.name
+                  td(style='text-align:center;border-left:2px solid #aaa')
+                    input.h-sc-split-radio(type='radio', name='split_' + item._id, value='', data-item-id=item._id, checked=!item.split ? true : undefined)
+                  td(style='text-align:center')
+                    input.h-sc-split-radio(type='radio', name='split_' + item._id, value='train', data-item-id=item._id, checked=item.split === 'train' ? true : undefined)
+                  td(style='text-align:center')
+                    input.h-sc-split-radio(type='radio', name='split_' + item._id, value='test', data-item-id=item._id, checked=item.split === 'test' ? true : undefined)
+                  td(style='text-align:center')
+                    input.h-sc-split-radio(type='radio', name='split_' + item._id, value='val', data-item-id=item._id, checked=item.split === 'val' ? true : undefined)
+                  td(style='border-left:2px solid #aaa')
+                  each cls in classes
+                    td(style='text-align:center')
+                      input.h-sc-label-cb(type='checkbox', data-item-id=item._id, data-class=cls, checked=item.labels && item.labels[cls] ? true : undefined)
+
+        if validation
+          .h-sc-validation(style='margin-bottom:8px')
+            p.text-muted.small(style='margin-bottom:4px')= 'Last validated: ' + validation.checkedAt
+            ul.list-unstyled.small(style='margin-bottom:0')
+              if validation.missingTrainClasses && validation.missingTrainClasses.length
+                each cls in validation.missingTrainClasses
+                  li
+                    i.icon-attention.text-warning
+                    = ' No training examples for class "' + cls + '"'
+              else
+                li
+                  i.icon-ok.text-success
+                  |  All classes have training examples
+
+        .h-sc-actions
+          button.btn.btn-default.btn-xs.h-sc-edit-btn
+            i.icon-pencil
+            |  Edit
+          = ' '
+          button.btn.btn-default.btn-xs.h-sc-validate-btn
+            i.icon-ok-circled
+            |  Validate
+          = ' '
+          button.btn.btn-primary.btn-xs.h-sc-run-btn(disabled=!canRun ? 'disabled' : undefined)
+            i.icon-play
+            |  Train
+          = ' '
+          button.btn.btn-default.btn-xs.h-sc-apply-btn
+            i.icon-upload-cloud
+            |  Apply

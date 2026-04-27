@@ -1,0 +1,38 @@
+.modal.fade(tabindex='-1', role='dialog')
+  .modal-dialog(role='document')
+    .modal-content
+      .modal-header
+        button.close(type='button', data-dismiss='modal', aria-label='Close')
+          span(aria-hidden='true') &times;
+        h4.modal-title Slide Classifier Setup
+      .modal-body
+        .form-group
+          label(for='h-sc-exp-name') Experiment Name
+          input#h-sc-exp-name.form-control(type='text', placeholder='e.g. Crypt Detection', value=name || '')
+
+        .form-group
+          label Classes
+          p.help-block.small
+            | Define the class labels for this experiment. Each slide in your training and test sets
+            | will be assigned one of these labels directly — no annotations required.
+            | A slide labeled "Crypt" is a positive example for that class; all other labeled slides are negative for it.
+
+          .h-sc-class-list(style='margin-bottom:8px')
+            if classes && classes.length
+              each cls in classes
+                .h-sc-class-item(style='display:flex;align-items:center;margin-bottom:4px')
+                  span.h-sc-class-name(style='flex:1')= cls
+                  button.btn.btn-xs.btn-danger.h-sc-remove-class-btn(type='button', data-name=cls)
+                    i.icon-cancel
+            else
+              p.text-muted.small.h-sc-no-classes-msg No classes defined yet.
+
+          .input-group(style='max-width:300px')
+            input.form-control.h-sc-new-class-input(type='text', placeholder='New class name…')
+            span.input-group-btn
+              button.btn.btn-default.h-sc-add-class-btn(type='button') Add
+
+        .g-validation-failed-message.hidden.text-danger
+      .modal-footer
+        button.btn.btn-default(type='button', data-dismiss='modal') Cancel
+        button.btn.btn-primary.h-sc-save-btn(type='button') Save
