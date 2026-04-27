@@ -62,7 +62,8 @@ const SlideClassifierPanel = Backbone.View.extend({
             _id: item._id,
             name: item.name,
             split: (item.meta || {})._aiSplit || null,
-            labels: (item.meta || {})._slideClassifierLabels || null
+            labels: (item.meta || {})._slideClassifierLabels || null,
+            prediction: (item.meta || {})._slideClassifierPrediction || null
         }));
 
         this.$el.html(slideClassifierPanelTemplate({

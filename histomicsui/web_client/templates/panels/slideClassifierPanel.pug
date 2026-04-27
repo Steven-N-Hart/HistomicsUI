@@ -46,6 +46,7 @@
                 th(rowspan=2, style='vertical-align:middle') Slide
                 th(colspan=4, style='text-align:center;border-left:2px solid #aaa') Split
                 th(colspan=classes.length + 1, style='text-align:center;border-left:2px solid #aaa') Label (check all that apply)
+                th(colspan=classes.length, style='text-align:center;border-left:2px solid #aaa') Prediction
               tr
                 th(style='text-align:center;border-left:2px solid #aaa;font-weight:normal;color:#999') —
                 th(style='text-align:center') Train
@@ -54,6 +55,8 @@
                 th(style='border-left:2px solid #aaa')
                 each cls in classes
                   th(style='text-align:center')= cls
+                each cls in classes
+                  th(style='text-align:center;border-left:2px solid #aaa')= cls
             tbody
               each item in items
                 tr(class=item.split ? '' : 'text-muted')
@@ -70,6 +73,13 @@
                   each cls in classes
                     td(style='text-align:center')
                       input.h-sc-label-cb(type='checkbox', data-item-id=item._id, data-class=cls, checked=item.labels && item.labels[cls] ? true : undefined)
+                  each cls in classes
+                    - var prob = item.prediction && item.prediction[cls] !== undefined ? item.prediction[cls] : null
+                    td(style='text-align:center;border-left:2px solid #aaa;font-size:11px')
+                      if prob !== null
+                        span(style='color:' + (prob >= 0.5 ? '#27ae60' : '#7f8c8d'))= (prob * 100).toFixed(1) + '%'
+                      else
+                        span.text-muted —
 
         if validation
           .h-sc-validation(style='margin-bottom:8px')
