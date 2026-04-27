@@ -25,6 +25,7 @@ const SlideClassifierPanel = Backbone.View.extend({
         this._folderId = settings.folderId;
         this._accessLevel = settings.accessLevel;
         this._experiment = null;
+        this._checkedItemIds = [];
         this._splitCounts = {train: 0, test: 0, val: 0, unassigned: 0};
         this._labelCounts = {};
         this._unlabeledAssigned = 0;
@@ -38,8 +39,17 @@ const SlideClassifierPanel = Backbone.View.extend({
         return this;
     },
 
-    // No-op: kept for HierarchyWidget compatibility (checkboxes used for delete, not assignment)
-    setCheckedItems() {},
+    setCheckedItems(ids) {
+        this._checkedItemIds = ids || [];
+        if (!this._loading && this._experiment) {
+            this._updateApplyButton();
+        }
+    },
+
+    _updateApplyButton() {
+        const count = this._checkedItemIds.length;
+        this.$('.h-sc-apply-count').text(count > 0 ? ` (${count} selected)` : '');
+    },
 
     _renderTemplate() {
         const classes = (this._experiment || {}).classes || [];
@@ -47,7 +57,7 @@ const SlideClassifierPanel = Backbone.View.extend({
         const imageItems = this._allItems.filter(
             (item) => !nonImageExt.test(item.name) && !item.name.startsWith('.')
         );
-
+        const imageItemIds = new Set(imageItems.map((item) => item._id));
         const items = imageItems.map((item) => ({
             _id: item._id,
             name: item.name,
@@ -258,7 +268,8 @@ const SlideClassifierPanel = Backbone.View.extend({
         if (!this._experiment) return;
         showApplySlideClassifierDialog({
             folderId: this._folderId,
-            experiment: this._experiment
+            experiment: this._experiment,
+            selectedItemIds: this._checkedItemIds.slice()
         });
     }
 });

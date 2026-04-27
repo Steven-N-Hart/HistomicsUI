@@ -22,14 +22,16 @@
           p.help-block.small Container-internal path to <code>model.pkl</code> produced by Build Slide Classifier.
 
         .form-group
-          label(for='h-sc-target-folder') Target Folder ID
-          input#h-sc-target-folder.form-control(type='text', name='folder_id', placeholder='(leave empty to use current folder)')
-          p.help-block.small Girder folder ID of the slides to predict on. Defaults to the current folder.
-
-        .form-group
           label(for='h-sc-apply-job-dir') Output Directory
           input#h-sc-apply-job-dir.form-control(type='text', name='job_dir', value=defaultJobDir || '')
           p.help-block.small Container-internal path where <code>predictions.json</code> will be written.
+
+        if selectedCount > 0
+          .alert.alert-info.small(style='padding:6px 10px')
+            | Applying to #{selectedCount} selected slide(s). Deselect all to apply to the entire folder.
+        else
+          .alert.alert-info.small(style='padding:6px 10px')
+            | No slides selected — will apply to all slides in the current folder.
 
         p.text-muted.small
           | Predictions are written to each slide item as <code>meta._slideClassifierPrediction</code> (per-class probabilities).

@@ -17,6 +17,7 @@ const ApplySlideClassifierView = Backbone.View.extend({
     initialize(settings) {
         this._folderId = settings.folderId;
         this._experiment = settings.experiment || null;
+        this._selectedItemIds = settings.selectedItemIds || [];
         this._cliId = null;
     },
 
@@ -30,7 +31,8 @@ const ApplySlideClassifierView = Backbone.View.extend({
         this.$el.html(applySlideClassifierTemplate({
             experiment: this._experiment,
             defaultModelPath,
-            defaultJobDir: `${STAGING_BASE}/${username}/${expName}`
+            defaultJobDir: `${STAGING_BASE}/${username}/${expName}`,
+            selectedCount: this._selectedItemIds.length
         }));
         this.$('.modal').modal('show');
         this.$('.modal').on('hidden.bs.modal', () => this.remove());
@@ -60,7 +62,7 @@ const ApplySlideClassifierView = Backbone.View.extend({
 
         const modelPath = this.$('#h-sc-model-path').val().trim();
         const jobDir = this.$('#h-sc-apply-job-dir').val().trim();
-        const targetFolderId = this.$('#h-sc-target-folder').val().trim() || this._folderId;
+        const targetFolderId = this._folderId;
 
         if (!modelPath) {
             this._showError('Model path is required.');
@@ -75,6 +77,7 @@ const ApplySlideClassifierView = Backbone.View.extend({
             folder_id: targetFolderId,
             model_path: modelPath,
             job_dir: jobDir,
+            item_ids: this._selectedItemIds.length ? this._selectedItemIds.join(',') : '',
             girderApiUrl: getApiRoot(),
             girderToken: (rawToken && typeof rawToken === 'object')
                 ? (rawToken.token || '') : (rawToken || '')
@@ -117,6 +120,7 @@ const showApplySlideClassifierDialog = function (settings) {
     const view = new ApplySlideClassifierView({
         folderId: settings.folderId,
         experiment: settings.experiment || null,
+        selectedItemIds: settings.selectedItemIds || [],
         el: $('<div/>').appendTo('body')
     });
     view.render();
