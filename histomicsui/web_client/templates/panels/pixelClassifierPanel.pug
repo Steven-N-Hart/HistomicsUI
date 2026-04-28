@@ -1,0 +1,107 @@
+.panel.panel-default.h-pc-panel
+  .panel-heading(style='cursor:pointer', data-toggle='collapse', data-target='#h-pc-body')
+    span.panel-title
+      | Pixel Classifier
+      if session
+        span.label.label-info.pull-right(style='margin-top:2px; font-size:11px; font-weight:normal') Configured
+  #h-pc-body.panel-collapse.collapse.in
+    .panel-body
+      if loading
+        p.text-muted
+          i.icon-spin.icon-spin-animate
+          |  Loading…
+
+      else if noItemSelected
+        p.text-muted No pixel classifier configured.
+        button.btn.btn-primary.btn-sm.h-pc-setup-btn(type='button')
+          i.icon-cog
+          |  Set Up Classifier
+
+      else if !session
+        p.text-muted No pixel classifier configured for this slide.
+        button.btn.btn-primary.btn-sm.h-pc-setup-btn
+          i.icon-cog
+          |  Set Up Classifier
+
+      else
+        - var iterations = session.iterations || []
+        - var lastIt = iterations.length ? iterations[iterations.length - 1] : null
+
+        .h-pc-stat-counts(style='margin-bottom:4px')
+          span.label.label-primary= 'Iterations: ' + iterations.length
+          = ' '
+          if session.current_model_item_id
+            span.label.label-success Trained
+          else
+            span.label.label-default Not yet trained
+          if pendingJobId
+            = ' '
+            span.label.label-warning
+              i.icon-spin.icon-spin-animate
+              |  Training…
+
+        .h-pc-info(style='margin-bottom:8px')
+          span.label.label-default(style='margin-right:3px; font-weight:normal')
+            = 'Model: ' + (session.model_type || 'trident_linear')
+          = ' '
+          span.label.label-default(style='margin-right:3px; font-weight:normal')
+            = 'Mag: ' + (session.magnification || 20) + '×'
+          = ' '
+          span.label.label-default(style='font-weight:normal')
+            = 'Patch: ' + (session.patch_size || 512) + ' px'
+
+        if pendingJobId
+          .alert.alert-warning.small(style='padding:6px 10px;margin-bottom:8px')
+            i.icon-spin.icon-spin-animate
+            |  Training in progress…
+            a(href='#job/' + pendingJobId, style='margin-left:6px') View job →
+
+        if lastIt && !pendingJobId
+          .h-pc-last-result(style='margin-bottom:8px')
+            ul.list-unstyled.small(style='margin-bottom:0')
+              li
+                i.icon-ok.text-success
+                = '  Last trained: Iteration ' + lastIt.num
+                if lastIt.trained_at
+                  = ' (' + lastIt.trained_at.slice(0, 10) + ')'
+              if lastIt.n_train_patches
+                li
+                  i.icon-circle-empty.text-muted
+                  = '  ' + lastIt.n_train_patches + ' training patches'
+
+        if iterations.length > 1
+          .table-responsive(style='margin-bottom:8px')
+            table.table.table-condensed.table-bordered.h-pc-table(style='font-size:12px;margin-bottom:0')
+              thead
+                tr
+                  th #
+                  th Date
+                  th Patches
+                  th Overlay
+              tbody
+                each it in iterations
+                  tr
+                    td= it.num
+                    td= it.trained_at ? it.trained_at.slice(0, 10) : '—'
+                    td= it.n_train_patches || '—'
+                    td
+                      if it.overlay_annotation_id
+                        a.h-pc-view-overlay(href='#', data-annotation-id=it.overlay_annotation_id) view
+
+        .h-pc-actions
+          button.btn.btn-default.btn-xs.h-pc-edit-btn
+            i.icon-pencil
+            |  Edit
+          = ' '
+          button.btn.btn-primary.btn-xs.h-pc-train-btn(
+            disabled=(!session.training_annotation_id || pendingJobId) ? 'disabled' : undefined
+          )
+            i.icon-play
+            |  Train
+          = ' '
+          button.btn.btn-default.btn-xs.h-pc-apply-btn(
+            disabled=!session.current_model_item_id ? 'disabled' : undefined
+          )
+            i.icon-upload-cloud
+            |  Apply
+            span.h-pc-apply-count

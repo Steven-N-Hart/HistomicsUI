@@ -1,0 +1,45 @@
+.modal.fade(tabindex='-1', role='dialog')
+  .modal-dialog(role='document')
+    .modal-content
+      .modal-header
+        button.close(type='button', data-dismiss='modal', aria-label='Close')
+          span(aria-hidden='true') &times;
+        h4.modal-title
+          | Train Pixel Classifier — Iteration #{iteration}
+
+      .modal-body
+        if session
+          p.text-muted.small(style='margin-bottom:8px')
+            | Session:
+            = ' '
+            strong= session.name || '(unnamed)'
+            |  &middot; Model: #{session.model_type || 'trident_linear'}
+            |  &middot; #{session.magnification || 20}× &middot; #{session.patch_size || 512} px
+
+          .h-pc-class-legend(style='margin-bottom:8px')
+            each cls in (session.classes || [])
+              span.h-pc-build-swatch(
+                style='display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:3px;background:' + cls.fillColor
+              )
+              span.small(style='margin-right:8px')= cls.name
+
+        if patchCounts && Object.keys(patchCounts).length
+          .h-pc-patch-counts(style='margin-bottom:8px')
+            p.small(style='margin-bottom:4px') Annotated patches:
+            each count, name in patchCounts
+              span.label.label-default(style='margin-right:4px')= name + ': ' + count
+
+        .form-group
+          label(for='h-pc-job-dir') Output Directory
+          input#h-pc-job-dir.form-control(
+            type='text',
+            value=jobDir || '',
+            placeholder='/Export/Shared/DSA/pixel_classifier'
+          )
+          p.help-block.small Container-internal path for intermediate files.
+
+        .alert.alert-danger.hidden.h-pc-build-error
+
+      .modal-footer
+        button.btn.btn-default(type='button', data-dismiss='modal') Cancel
+        button.btn.btn-primary.h-pc-build-submit(type='button') Train

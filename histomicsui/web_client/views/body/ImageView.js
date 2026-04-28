@@ -308,6 +308,7 @@ var ImageView = View.extend({
                     .setViewer(this.viewerWidget)
                     .setElement('.h-annotation-selector').render();
 
+
                 if (this.drawWidget) {
                     this.drawWidget
                         .setViewer(this.viewerWidget)
@@ -321,6 +322,11 @@ var ImageView = View.extend({
             this.annotationSelector
                 .setViewer(null)
                 .setElement('.h-annotation-selector').render();
+
+            this.pixelClassifierPanel
+                .setElement('.h-pixel-classifier')
+                .setItem(this.model.id)
+                .render();
 
             if (this.drawWidget) {
                 this.drawWidget

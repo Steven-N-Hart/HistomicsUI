@@ -8,6 +8,7 @@ import HierarchyWidget from '@girder/core/views/widgets/HierarchyWidget';
 import ItemCollection from '@girder/core/collections/ItemCollection';
 
 import showTridentEmbeddingsDialog from '../dialogs/tridentEmbeddings';
+import PixelClassifierPanel from '../panels/PixelClassifierPanel';
 import SlideClassifierPanel from '../panels/SlideClassifierPanel';
 
 let _tridentCliAvailable = null; // null = unchecked, true/false = resolved
@@ -174,22 +175,36 @@ wrap(HierarchyWidget, 'render', function (render) {
         }
     }
 
-    // Slide Classifier panel — folder context only
+    // Slide Classifier + Pixel Classifier panels — folder context only
     if (parentModel.resourceName === 'folder') {
         if (self._slideClassifierPanel) {
             self._slideClassifierPanel.remove();
             self._slideClassifierPanel = null;
         }
+        if (self._pixelClassifierPanel) {
+            self._pixelClassifierPanel.remove();
+            self._pixelClassifierPanel = null;
+        }
 
-        const $container = $('<div class="h-sc-container" style="margin:16px 8px 0"></div>');
-        self.$el.append($container);
+        const $scContainer = $('<div class="h-sc-container" style="margin:16px 8px 0"></div>');
+        self.$el.append($scContainer);
 
         self._slideClassifierPanel = new SlideClassifierPanel({
-            el: $container[0],
+            el: $scContainer[0],
             folderId: parentModel.id,
             accessLevel: parentModel.get('_accessLevel')
         });
         self._slideClassifierPanel.render();
+
+        const $pcContainer = $('<div class="h-pc-hw-container" style="margin:16px 8px 0"></div>');
+        self.$el.append($pcContainer);
+
+        self._pixelClassifierPanel = new PixelClassifierPanel({
+            el: $pcContainer[0],
+            itemId: null,
+            accessLevel: parentModel.get('_accessLevel')
+        });
+        self._pixelClassifierPanel.render();
 
         const syncChecked = () => {
             const ids = [];
@@ -202,11 +217,19 @@ wrap(HierarchyWidget, 'render', function (render) {
             if (self._slideClassifierPanel) {
                 self._slideClassifierPanel.setCheckedItems(ids);
             }
+            if (self._pixelClassifierPanel) {
+                const itemId = ids.length === 1 ? ids[0] : null;
+                self._pixelClassifierPanel.setItem(itemId);
+                self._pixelClassifierPanel.setCheckedItems(ids);
+            }
         };
 
         if (self.itemListView) {
             self.listenTo(self.itemListView, 'g:checkboxesChanged', syncChecked);
         }
+
+        // Move metadata section to the bottom
+        self.$el.append(self.$('.g-folder-metadata'));
     }
 
     return this;

@@ -5,6 +5,9 @@ import editElement from './editElement';
 import saveAnnotation from './saveAnnotation';
 import editRegionOfInterest from './editRegionOfInterest';
 import metadataPlot from './metadataPlot';
+import showEditPixelClassifierDialog from './editPixelClassifier';
+import showBuildPixelClassifierDialog from './buildPixelClassifier';
+import showApplyPixelClassifierDialog from './applyPixelClassifier';
 
 export {
     confirmDialog,
@@ -13,5 +16,8 @@ export {
     editElement,
     saveAnnotation,
     editRegionOfInterest,
-    metadataPlot
+    metadataPlot,
+    showEditPixelClassifierDialog,
+    showBuildPixelClassifierDialog,
+    showApplyPixelClassifierDialog
 };

@@ -1,0 +1,64 @@
+.modal.fade(tabindex='-1', role='dialog')
+  .modal-dialog(role='document')
+    .modal-content
+      .modal-header
+        button.close(type='button', data-dismiss='modal', aria-label='Close')
+          span(aria-hidden='true') &times;
+        h4.modal-title= session ? 'Edit Pixel Classifier Session' : 'Set Up Pixel Classifier'
+
+      .modal-body
+        .form-group
+          label(for='h-pc-session-name') Session Name
+          input#h-pc-session-name.form-control(
+            type='text',
+            placeholder='e.g. Tumor vs Stroma',
+            value=session ? session.name : ''
+          )
+
+        .form-group
+          label(for='h-pc-existing-ann-id') Training Annotation
+          select#h-pc-existing-ann-id.form-control
+            option(value='') — Draw with brush (new blank annotation) —
+            each ann in (annotations || [])
+              option(
+                value=ann._id,
+                selected=(session && session.training_annotation_id === ann._id) ? true : undefined
+              )= ann.annotation.name || ann._id
+          p.help-block.small
+            | Select an existing annotation to use as training data (polygon or brush).
+            | Background patches are sampled automatically.
+
+        .row
+          .col-sm-4.form-group
+            label(for='h-pc-magnification') Magnification
+            select#h-pc-magnification.form-control(name='magnification')
+              each mag in [5, 10, 20, 40]
+                option(value=mag, selected=(session ? session.magnification : 20) === mag)= mag + '×'
+
+          .col-sm-4.form-group
+            label(for='h-pc-model-type') Model Type
+            select#h-pc-model-type.form-control(name='model_type')
+              option(value='trident_linear', selected=(session ? session.model_type : 'trident_linear') === 'trident_linear')
+                | TRIDENT Linear
+              option(value='trident_mlp', selected=(session ? session.model_type : '') === 'trident_mlp')
+                | TRIDENT MLP
+              option(value='resnet_linear', selected=(session ? session.model_type : '') === 'resnet_linear')
+                | ResNet-18 Linear
+              option(value='random_forest', selected=(session ? session.model_type : '') === 'random_forest')
+                | Random Forest (CPU)
+
+          .col-sm-4.form-group
+            label(for='h-pc-patch-size') Patch Size
+            select#h-pc-patch-size.form-control(name='patch_size')
+              each ps in [256, 512]
+                option(value=ps, selected=(session ? session.patch_size : 512) === ps)= ps + ' px'
+              option(value=128, selected=(session ? session.patch_size : 0) === 128) 128 px (RF)
+              option(value=64, selected=(session ? session.patch_size : 0) === 64) 64 px (RF)
+
+        .h-pc-model-desc.small.text-muted(style='margin-bottom:8px')
+
+        .alert.alert-danger.hidden.h-pc-edit-error
+
+      .modal-footer
+        button.btn.btn-default(type='button', data-dismiss='modal') Cancel
+        button.btn.btn-primary.h-pc-save-btn(type='button') Save

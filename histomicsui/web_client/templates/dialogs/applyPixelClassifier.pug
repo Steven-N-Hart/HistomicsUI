@@ -1,0 +1,48 @@
+.modal.fade(tabindex='-1', role='dialog')
+  .modal-dialog(role='document')
+    .modal-content
+      .modal-header
+        button.close(type='button', data-dismiss='modal', aria-label='Close')
+          span(aria-hidden='true') &times;
+        h4.modal-title Apply Pixel Classifier
+
+      .modal-body
+        if modelMeta
+          p.text-muted.small(style='margin-bottom:8px')
+            | Model:
+            = ' '
+            strong= modelMeta.session_name || '(unnamed)'
+            if modelMeta.oob_accuracy
+              = ' &middot; Accuracy: ' + (modelMeta.oob_accuracy * 100).toFixed(1) + '%'
+            if modelMeta.classes && modelMeta.classes.length
+              = ' &middot; Classes: ' + modelMeta.classes.join(', ')
+
+        if itemIds && itemIds.length
+          .alert.alert-info.small(style='padding:6px 10px;margin-bottom:12px')
+            i.icon-info-circled
+            = ' Will apply to ' + itemIds.length + ' selected slide(s).'
+        else
+          .alert.alert-warning.small(style='padding:6px 10px;margin-bottom:8px')
+            i.icon-attention
+            |  No slides selected. Enter item IDs below.
+
+          .form-group
+            label(for='h-pc-apply-item-ids') Slide Item IDs (comma-separated)
+            textarea#h-pc-apply-item-ids.form-control(
+              rows='3',
+              placeholder='68abc123, 68def456, …'
+            )
+
+        .form-group
+          label(for='h-pc-apply-job-dir') Output Directory
+          input#h-pc-apply-job-dir.form-control(
+            type='text',
+            value=jobDir || '',
+            placeholder='/Export/Shared/DSA/pixel_classifier'
+          )
+
+        .alert.alert-danger.hidden.h-pc-apply-error
+
+      .modal-footer
+        button.btn.btn-default(type='button', data-dismiss='modal') Cancel
+        button.btn.btn-primary.h-pc-apply-submit(type='button') Apply
