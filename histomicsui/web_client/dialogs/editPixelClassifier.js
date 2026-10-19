@@ -15,51 +15,102 @@ const MODEL_DESCRIPTIONS = {
 const EditPixelClassifierView = Backbone.View.extend({
     events: {
         'change #h-pc-model-type': '_updateModelDesc',
-        'click .h-pc-save-btn': '_save'
+        'click .h-pc-save-btn': '_save',
+        'click .btn-default': '_cancel',
+        'click .close': '_cancel'
     },
 
     initialize(settings) {
-        this._itemId = settings.itemId;
+        this._folderId = settings.folderId;
+        this._checkedItemIds = settings.checkedItemIds || [];
         this._session = settings.session || null;
         this._onSave = settings.onSave || function () {};
-        this._annotations = [];
+        this._annotationNames = [];
     },
 
     render() {
         this.$el.html(editPixelClassifierTemplate({
             session: this._session,
-            annotations: this._annotations
+            annotationNames: this._annotationNames,
+            noSlidesChecked: !this._checkedItemIds.length
         }));
         this.$('.modal').modal('show');
         this.$('.modal').on('hidden.bs.modal', () => this.remove());
         this._updateModelDesc();
-        this._loadAnnotations();
+        this._loadAnnotationNames();
         return this;
     },
 
-    _loadAnnotations() {
-        restRequest({
-            url: `annotation?itemId=${this._itemId}&limit=200&sort=lowerName`,
-            error: null
-        }).then((anns) => {
-            this._annotations = anns || [];
-            // Re-render only the dropdown to avoid losing other form state
-            const currentVal = this.$('#h-pc-existing-ann-id').val();
-            const $select = this.$('#h-pc-existing-ann-id');
-            $select.empty().append('<option value="">— Draw with brush (new blank annotation) —</option>');
-            this._annotations.forEach((ann) => {
-                const name = (ann.annotation && ann.annotation.name) || ann._id;
-                const selected = currentVal === ann._id ||
-                    (!currentVal && this._session &&
-                     this._session.training_annotation_id === ann._id);
-                $select.append(
-                    $('<option>')
-                        .val(ann._id)
-                        .text(name)
-                        .prop('selected', selected)
-                );
+    _cancel() {
+        this.$('.modal').modal('hide');
+    },
+
+    _loadAnnotationNames() {
+        const itemIds = this._checkedItemIds;
+        if (!itemIds.length) {
+            // Initial render already shows the "check slides" message — nothing to update.
+            return;
+        }
+
+        const chunkSize = 5;
+        let i = 0;
+        const allResults = [];
+
+        const processChunk = () => {
+            const chunk = itemIds.slice(i, i + chunkSize);
+            if (!chunk.length) {
+                // all done
+                const nameSet = new Set();
+                (allResults || []).forEach((anns) => {
+                    (anns || []).forEach((ann) => {
+                        const name = (ann.annotation || {}).name;
+                        if (name) nameSet.add(name);
+                    });
+                });
+                this._annotationNames = Array.from(nameSet).sort();
+                this._rerenderDropdowns();
+                return;
+            }
+
+            Promise.all(
+                chunk.map((id) => new Promise((resolve) => {
+                    restRequest({url: 'annotation', data: {itemId: id, limit: 500}, error: null})
+                        .then(resolve)
+                        .fail(() => resolve(null));
+                }))
+            ).then((results) => {
+                allResults.push(...results);
+                i += chunkSize;
+                processChunk();
             });
-        });
+        };
+
+        processChunk();
+    },
+
+    _rerenderDropdowns() {
+        const names = this._annotationNames;
+        const savedAnn = (this._session || {}).positive_annotation_name || '';
+        const savedRoi = (this._session || {}).roi_annotation_name || '';
+
+        const makeSelect = (id, blankLabel, selectedValue) => {
+            const $select = $(`<select id="${id}" class="form-control">`);
+            $select.append($('<option>').val('').text(blankLabel));
+            names.forEach((name) => {
+                $select.append($('<option>').val(name).text(name).prop('selected', name === selectedValue));
+            });
+            return $select;
+        };
+
+        // Replace the loading spinners with dropdowns in-place — never touch .modal itself.
+        this.$('label[for="h-pc-ann-name"]').siblings('.text-muted').replaceWith(
+            makeSelect('h-pc-ann-name', '— Select annotation —', savedAnn)
+        );
+        this.$('label[for="h-pc-roi-name"]').siblings('.text-muted').replaceWith(
+            makeSelect('h-pc-roi-name', '— None (use whole slide) —', savedRoi)
+        );
+
+        this.delegateEvents();
     },
 
     _updateModelDesc() {
@@ -67,106 +118,57 @@ const EditPixelClassifierView = Backbone.View.extend({
         this.$('.h-pc-model-desc').text(MODEL_DESCRIPTIONS[type] || '');
     },
 
-    _validate(name) {
-        if (!name) {
-            return 'Session name is required.';
-        }
-        return null;
-    },
-
     _save() {
         const name = this.$('#h-pc-session-name').val().trim();
-        const existingAnnId = this.$('#h-pc-existing-ann-id').val().trim();
-        // Classes always auto-detected by the CLI from the annotation
-        const classes = [];
-        const error = this._validate(name);
-        if (error) {
-            this.$('.h-pc-edit-error').text(error).removeClass('hidden');
+        const annName = (this.$('#h-pc-ann-name').val() || '').trim();
+
+        if (!name) {
+            this.$('.h-pc-edit-error').text('Experiment name is required.').removeClass('hidden');
+            return;
+        }
+        if (!annName) {
+            this.$('.h-pc-edit-error').text('Annotation name is required.').removeClass('hidden');
             return;
         }
         this.$('.h-pc-edit-error').addClass('hidden');
         this.$('.h-pc-save-btn').prop('disabled', true).text('Saving…');
 
-        const isNew = !this._session;
         const now = new Date().toISOString();
-
         const session = Object.assign({}, this._session || {}, {
             name,
-            classes,
+            positive_annotation_name: annName,
+            roi_annotation_name: (this.$('#h-pc-roi-name').val() || '').trim() || null,
             magnification: parseInt(this.$('#h-pc-magnification').val(), 10),
             model_type: this.$('#h-pc-model-type').val(),
             patch_size: parseInt(this.$('#h-pc-patch-size').val(), 10),
             updated_at: now
         });
-        if (isNew) {
+        if (!this._session) {
             session.created_at = now;
             session.iterations = [];
         }
 
-        const saveSession = () => restRequest({
-            url: `item/${this._itemId}/metadata`,
+        restRequest({
+            url: `folder/${this._folderId}/metadata`,
             method: 'PUT',
             contentType: 'application/json',
             data: JSON.stringify({_pixelClassifierSession: session}),
             error: null
+        }).then(() => {
+            this.$('.modal').modal('hide');
+            this._onSave(session);
+        }).catch((resp) => {
+            this.$('.h-pc-save-btn').prop('disabled', false).text('Save');
+            const msg = ((resp.responseJSON || {}).message) || resp.statusText || 'Unknown error';
+            this.$('.h-pc-edit-error').text('Save failed: ' + msg).removeClass('hidden');
         });
-
-        const linkAnnotation = () => {
-            if (existingAnnId) {
-                return Promise.resolve(existingAnnId);
-            }
-            if (session.training_annotation_id) {
-                return Promise.resolve(session.training_annotation_id);
-            }
-            // Brush path: create a blank pixelmap annotation to draw on
-            return restRequest({
-                url: `annotation?itemId=${this._itemId}`,
-                method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({
-                    annotation: {
-                        name: `PixelClassifier Training — ${session.name}`,
-                        elements: [{
-                            type: 'pixelmap',
-                            values: '',
-                            categories: [],
-                            boundaries: {x: 0, y: 0, width: 0, height: 0}
-                        }]
-                    }
-                }),
-                error: null
-            }).then((ann) => ann._id);
-        };
-
-        saveSession()
-            .then(() => linkAnnotation())
-            .then((annId) => {
-                session.training_annotation_id = annId;
-                return restRequest({
-                    url: `item/${this._itemId}/metadata`,
-                    method: 'PUT',
-                    contentType: 'application/json',
-                    data: JSON.stringify({_pixelClassifierSession: session}),
-                    error: null
-                });
-            })
-            .then(() => {
-                this.$('.modal').modal('hide');
-                this._onSave(session);
-            })
-            .catch((resp) => {
-                this.$('.h-pc-save-btn').prop('disabled', false).text('Save');
-                const msg = ((resp.responseJSON || {}).message) ||
-                    resp.statusText || 'Unknown error';
-                this.$('.h-pc-edit-error').text('Save failed: ' + msg).removeClass('hidden');
-            });
     }
 });
 
-
 const showEditPixelClassifierDialog = function (settings) {
     const view = new EditPixelClassifierView({
-        itemId: settings.itemId,
+        folderId: settings.folderId,
+        checkedItemIds: settings.checkedItemIds || [],
         session: settings.session || null,
         onSave: settings.onSave || function () {},
         el: $('<div/>').appendTo('body')

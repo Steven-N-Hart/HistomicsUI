@@ -201,7 +201,7 @@ wrap(HierarchyWidget, 'render', function (render) {
 
         self._pixelClassifierPanel = new PixelClassifierPanel({
             el: $pcContainer[0],
-            itemId: null,
+            folderId: parentModel.id,
             accessLevel: parentModel.get('_accessLevel')
         });
         self._pixelClassifierPanel.render();
@@ -218,8 +218,6 @@ wrap(HierarchyWidget, 'render', function (render) {
                 self._slideClassifierPanel.setCheckedItems(ids);
             }
             if (self._pixelClassifierPanel) {
-                const itemId = ids.length === 1 ? ids[0] : null;
-                self._pixelClassifierPanel.setItem(itemId);
                 self._pixelClassifierPanel.setCheckedItems(ids);
             }
         };

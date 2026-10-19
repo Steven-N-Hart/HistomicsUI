@@ -19,6 +19,7 @@
 
       else
         .h-sc-split-counts(style='margin-bottom:4px')
+          small.text-muted(style='margin-right:4px') Splits:
           span.label.label-primary= 'Train: ' + splitCounts.train
           = ' '
           span.label.label-warning= 'Test: ' + splitCounts.test
@@ -29,8 +30,9 @@
           span.label.label-default= 'Unassigned: ' + splitCounts.unassigned
 
         .h-sc-label-counts(style='margin-bottom:8px')
+          small.text-muted(style='margin-right:4px') Labels:
           each cls in classes
-            span.label.label-default(style='margin-right:3px')= cls + ': ' + (labelCounts[cls] || 0)
+            span.label.label-info(style='margin-right:3px')= cls + ': ' + (labelCounts[cls] || 0)
 
         if splitCounts.train < 2
           .h-sc-run-warning.alert.alert-warning.small(style='padding:6px 10px;margin-bottom:8px')
@@ -108,7 +110,11 @@
             i.icon-play
             |  Train
           = ' '
-          button.btn.btn-default.btn-xs.h-sc-apply-btn
+          button.btn.btn-success.btn-xs.h-sc-apply-btn
             i.icon-upload-cloud
-            |  Apply
+            |  Predict
             span.h-sc-apply-count
+          = ' '
+          button.btn.btn-danger.btn-xs.h-sc-delete-btn
+            i.icon-trash
+            |  Delete

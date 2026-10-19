@@ -11,52 +11,39 @@
           i.icon-spin.icon-spin-animate
           |  Loading…
 
-      else if noItemSelected
-        p.text-muted No pixel classifier configured.
-        button.btn.btn-primary.btn-sm.h-pc-setup-btn(type='button')
-          i.icon-cog
-          |  Set Up Classifier
-
       else if !session
-        p.text-muted No pixel classifier configured for this slide.
+        p.text-muted No pixel classifier configured for this folder.
         button.btn.btn-primary.btn-sm.h-pc-setup-btn
           i.icon-cog
           |  Set Up Classifier
 
       else
-        - var iterations = session.iterations || []
-        - var lastIt = iterations.length ? iterations[iterations.length - 1] : null
-
-        .h-pc-stat-counts(style='margin-bottom:4px')
-          span.label.label-primary= 'Iterations: ' + iterations.length
+        .h-pc-split-counts(style='margin-bottom:4px')
+          span.label.label-primary= 'Train: ' + splitCounts.train
           = ' '
-          if session.current_model_item_id
-            span.label.label-success Trained
-          else
-            span.label.label-default Not yet trained
-          if pendingJobId
+          span.label.label-warning= 'Test: ' + splitCounts.test
+          if splitCounts.val > 0
             = ' '
-            span.label.label-warning
-              i.icon-spin.icon-spin-animate
-              |  Training…
+            span.label.label-success= 'Val: ' + splitCounts.val
+          = ' '
+          span.label.label-default= 'Unassigned: ' + splitCounts.unassigned
 
-        .h-pc-info(style='margin-bottom:8px')
-          span.label.label-default(style='margin-right:3px; font-weight:normal')
-            = 'Model: ' + (session.model_type || 'trident_linear')
-          = ' '
-          span.label.label-default(style='margin-right:3px; font-weight:normal')
-            = 'Mag: ' + (session.magnification || 20) + '×'
-          = ' '
+        .h-pc-annotation-info(style='margin-bottom:8px')
           span.label.label-default(style='font-weight:normal')
-            = 'Patch: ' + (session.patch_size || 512) + ' px'
+            = 'Annotation: ' + (session.positive_annotation_name || '(not set)')
+          if session.roi_annotation_name
+            = ' '
+            span.label.label-default(style='font-weight:normal')
+              = 'ROI: ' + session.roi_annotation_name
 
-        if pendingJobId
-          .alert.alert-warning.small(style='padding:6px 10px;margin-bottom:8px')
-            i.icon-spin.icon-spin-animate
-            |  Training in progress…
-            a(href='#job/' + pendingJobId, style='margin-left:6px') View job →
+        if splitCounts.train < 1
+          .h-pc-train-warning.alert.alert-warning.small(style='padding:6px 10px;margin-bottom:8px')
+            i.icon-attention
+            |  Assign at least one slide to Train to enable training.
+        else
+          .h-pc-train-warning(style='display:none')
 
-        if lastIt && !pendingJobId
+        if lastIt
           .h-pc-last-result(style='margin-bottom:8px')
             ul.list-unstyled.small(style='margin-bottom:0')
               li
@@ -64,44 +51,59 @@
                 = '  Last trained: Iteration ' + lastIt.num
                 if lastIt.trained_at
                   = ' (' + lastIt.trained_at.slice(0, 10) + ')'
-              if lastIt.n_train_patches
+              if lastIt.split_counts
+                - var sc = lastIt.split_counts
                 li
                   i.icon-circle-empty.text-muted
-                  = '  ' + lastIt.n_train_patches + ' training patches'
+                  = '  Train: ' + (sc.train || 0) + ' patches'
+                  if sc.test
+                    = ' · Test: ' + sc.test
+                  if sc.val
+                    = ' · Val: ' + sc.val
+              if lastIt.metrics
+                - var m = lastIt.metrics
+                li
+                  i.icon-chart-bar.text-muted
+                  = '  Accuracy —'
+                  if m.train_accuracy !== null && m.train_accuracy !== undefined
+                    = ' Train: ' + (m.train_accuracy * 100).toFixed(1) + '%'
+                  if m.test_accuracy !== null && m.test_accuracy !== undefined
+                    = ' · Test: ' + (m.test_accuracy * 100).toFixed(1) + '%'
+                  if m.val_accuracy !== null && m.val_accuracy !== undefined
+                    = ' · Val: ' + (m.val_accuracy * 100).toFixed(1) + '%'
 
-        if iterations.length > 1
-          .table-responsive(style='margin-bottom:8px')
-            table.table.table-condensed.table-bordered.h-pc-table(style='font-size:12px;margin-bottom:0')
-              thead
-                tr
-                  th #
-                  th Date
-                  th Patches
-                  th Overlay
-              tbody
-                each it in iterations
-                  tr
-                    td= it.num
-                    td= it.trained_at ? it.trained_at.slice(0, 10) : '—'
-                    td= it.n_train_patches || '—'
-                    td
-                      if it.overlay_annotation_id
-                        a.h-pc-view-overlay(href='#', data-annotation-id=it.overlay_annotation_id) view
+        .table-responsive(style='margin-bottom:8px')
+          table.table.table-condensed.table-bordered.h-pc-table(style='font-size:12px;margin-bottom:0')
+            thead
+              tr
+                th Slide
+                th(style='text-align:center;border-left:2px solid #aaa') —
+                th(style='text-align:center') Train
+                th(style='text-align:center') Test
+                th(style='text-align:center') Val
+            tbody
+              each item in items
+                tr(class=item.split ? '' : 'text-muted')
+                  td(style='max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', title=item.name)= item.name
+                  td(style='text-align:center;border-left:2px solid #aaa')
+                    input.h-pc-split-radio(type='radio', name='pc_split_' + item._id, value='', data-item-id=item._id, checked=!item.split ? true : undefined)
+                  td(style='text-align:center')
+                    input.h-pc-split-radio(type='radio', name='pc_split_' + item._id, value='train', data-item-id=item._id, checked=item.split === 'train' ? true : undefined)
+                  td(style='text-align:center')
+                    input.h-pc-split-radio(type='radio', name='pc_split_' + item._id, value='test', data-item-id=item._id, checked=item.split === 'test' ? true : undefined)
+                  td(style='text-align:center')
+                    input.h-pc-split-radio(type='radio', name='pc_split_' + item._id, value='val', data-item-id=item._id, checked=item.split === 'val' ? true : undefined)
 
         .h-pc-actions
           button.btn.btn-default.btn-xs.h-pc-edit-btn
             i.icon-pencil
             |  Edit
           = ' '
-          button.btn.btn-primary.btn-xs.h-pc-train-btn(
-            disabled=(!session.training_annotation_id || pendingJobId) ? 'disabled' : undefined
-          )
+          button.btn.btn-primary.btn-xs.h-pc-train-btn(disabled=!canTrain ? 'disabled' : undefined)
             i.icon-play
             |  Train
           = ' '
-          button.btn.btn-default.btn-xs.h-pc-apply-btn(
-            disabled=!session.current_model_item_id ? 'disabled' : undefined
-          )
+          button.btn.btn-default.btn-xs.h-pc-apply-btn(disabled=!session.current_model_item_id ? 'disabled' : undefined)
             i.icon-upload-cloud
             |  Apply
             span.h-pc-apply-count

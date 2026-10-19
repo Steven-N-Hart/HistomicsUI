@@ -4,52 +4,76 @@
       .modal-header
         button.close(type='button', data-dismiss='modal', aria-label='Close')
           span(aria-hidden='true') &times;
-        h4.modal-title= session ? 'Edit Pixel Classifier Session' : 'Set Up Pixel Classifier'
+        h4.modal-title= session ? 'Edit Pixel Classifier' : 'Set Up Pixel Classifier'
 
       .modal-body
         .form-group
-          label(for='h-pc-session-name') Session Name
+          label(for='h-pc-session-name') Experiment Name
           input#h-pc-session-name.form-control(
             type='text',
-            placeholder='e.g. Tumor vs Stroma',
+            placeholder='e.g. Crypt Detection',
             value=session ? session.name : ''
           )
 
         .form-group
-          label(for='h-pc-existing-ann-id') Training Annotation
-          select#h-pc-existing-ann-id.form-control
-            option(value='') — Draw with brush (new blank annotation) —
-            each ann in (annotations || [])
-              option(
-                value=ann._id,
-                selected=(session && session.training_annotation_id === ann._id) ? true : undefined
-              )= ann.annotation.name || ann._id
+          label(for='h-pc-ann-name') Annotation Name
+          if noSlidesChecked
+            p.text-muted.small
+              i.icon-attention
+              |  Check one or more slides in the folder list, then click Set Up Classifier.
+          else if !annotationNames || !annotationNames.length
+            p.text-muted.small
+              i.icon-spin.icon-spin-animate
+              |  Loading annotation names from checked slides…
+          else
+            select#h-pc-ann-name.form-control
+              option(value='') — Select annotation —
+              each name in annotationNames
+                option(
+                  value=name,
+                  selected=(session && session.positive_annotation_name === name) ? true : undefined
+                )= name
           p.help-block.small
-            | Select an existing annotation to use as training data (polygon or brush).
-            | Background patches are sampled automatically.
+            | The annotation present on each slide that marks the target structures.
+            | All polygon/shape elements inside matching annotations are used as positive patches.
+
+        .form-group
+          label(for='h-pc-roi-name') ROI Annotation Name (optional)
+          if noSlidesChecked
+          else if !annotationNames || !annotationNames.length
+            p.text-muted.small
+              i.icon-spin.icon-spin-animate
+              |  Loading…
+          else
+            select#h-pc-roi-name.form-control
+              option(value='') — None (use whole slide) —
+              each name in annotationNames
+                option(
+                  value=name,
+                  selected=(session && session.roi_annotation_name === name) ? true : undefined
+                )= name
+          p.help-block.small
+            | Annotation whose polygons define the region of interest on each slide.
+            | Background patches are sampled only from inside this region. Leave empty for whole slide.
 
         .row
           .col-sm-4.form-group
             label(for='h-pc-magnification') Magnification
-            select#h-pc-magnification.form-control(name='magnification')
+            select#h-pc-magnification.form-control
               each mag in [5, 10, 20, 40]
                 option(value=mag, selected=(session ? session.magnification : 20) === mag)= mag + '×'
 
           .col-sm-4.form-group
             label(for='h-pc-model-type') Model Type
-            select#h-pc-model-type.form-control(name='model_type')
-              option(value='trident_linear', selected=(session ? session.model_type : 'trident_linear') === 'trident_linear')
-                | TRIDENT Linear
-              option(value='trident_mlp', selected=(session ? session.model_type : '') === 'trident_mlp')
-                | TRIDENT MLP
-              option(value='resnet_linear', selected=(session ? session.model_type : '') === 'resnet_linear')
-                | ResNet-18 Linear
-              option(value='random_forest', selected=(session ? session.model_type : '') === 'random_forest')
-                | Random Forest (CPU)
+            select#h-pc-model-type.form-control
+              option(value='trident_linear', selected=(session ? session.model_type : 'trident_linear') === 'trident_linear') TRIDENT Linear
+              option(value='trident_mlp', selected=(session ? session.model_type : '') === 'trident_mlp') TRIDENT MLP
+              option(value='resnet_linear', selected=(session ? session.model_type : '') === 'resnet_linear') ResNet-18 Linear
+              option(value='random_forest', selected=(session ? session.model_type : '') === 'random_forest') Random Forest (CPU)
 
           .col-sm-4.form-group
             label(for='h-pc-patch-size') Patch Size
-            select#h-pc-patch-size.form-control(name='patch_size')
+            select#h-pc-patch-size.form-control
               each ps in [256, 512]
                 option(value=ps, selected=(session ? session.patch_size : 512) === ps)= ps + ' px'
               option(value=128, selected=(session ? session.patch_size : 0) === 128) 128 px (RF)

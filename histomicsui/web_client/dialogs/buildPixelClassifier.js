@@ -2,12 +2,10 @@ import $ from 'jquery';
 import Backbone from 'backbone';
 
 import {restRequest, getApiRoot} from '@girder/core/rest';
-import {getCurrentUser, getCurrentToken} from '@girder/core/auth';
+import {getCurrentToken, getCurrentUser} from '@girder/core/auth';
 import events from '@girder/core/events';
 
 import buildPixelClassifierTemplate from '../templates/dialogs/buildPixelClassifier.pug';
-
-const STAGING_BASE = '/Export/Shared/DSA/pixel_classifier';
 
 const BuildPixelClassifierView = Backbone.View.extend({
     events: {
@@ -15,34 +13,40 @@ const BuildPixelClassifierView = Backbone.View.extend({
     },
 
     initialize(settings) {
-        this._itemId = settings.itemId;
+        this._folderId = settings.folderId;
         this._session = settings.session || null;
-        this._onSubmit = settings.onSubmit || function () {};
+        this._splitCounts = settings.splitCounts || null;
         this._cliId = null;
     },
 
     render() {
         const iterations = (this._session && this._session.iterations) || [];
-        const iteration = iterations.length + 1;
-        const lastIt = iterations[iterations.length - 1] || null;
-        const patchCounts = lastIt ? null : null;
-
-        const user = getCurrentUser();
-        const username = (user && user.get('login')) || 'user';
-        const sessionSlug = ((this._session && this._session.name) || 'session')
-            .replace(/[\s/\\]+/g, '_');
-        const jobDir = `${STAGING_BASE}/${username}/${sessionSlug}`;
+        const session = this._session || {};
 
         this.$el.html(buildPixelClassifierTemplate({
-            session: this._session,
-            iteration,
-            patchCounts,
-            jobDir
+            session,
+            splitCounts: this._splitCounts,
+            iteration: iterations.length + 1,
+            jobDir: ''
         }));
         this.$('.modal').modal('show');
         this.$('.modal').on('hidden.bs.modal', () => this.remove());
         this._loadCliInfo();
+        this._loadDefaultJobDir();
         return this;
+    },
+
+    _loadDefaultJobDir() {
+        const session = this._session || {};
+        const sessionSlug = (session.name || 'session').replace(/[\s/\\]+/g, '_');
+        const user = getCurrentUser();
+        const username = (user && user.get('login')) || 'user';
+
+        restRequest({url: `folder/${this._folderId}`, error: null}).then((folder) => {
+            const folderName = (folder && folder.name) ? folder.name.replace(/[\s/\\]+/g, '_') : 'folder';
+            const jobDir = `/Export/Shared/DSA/AI_EXPERIMENTS/${username}/${folderName}/pixel_classifier/${sessionSlug}`;
+            this.$('#h-pc-job-dir').val(jobDir);
+        });
     },
 
     _loadCliInfo() {
@@ -51,10 +55,7 @@ const BuildPixelClassifierView = Backbone.View.extend({
             if (entry) {
                 this._cliId = entry._id;
             } else {
-                this._showError(
-                    'BuildPixelClassifier CLI is not registered in this DSA instance. '
-                    + 'Rebuild the histomicstk worker image to pick up the new task.'
-                );
+                this._showError('BuildPixelClassifier CLI is not registered. Rebuild the histomicstk image.');
             }
         });
     },
@@ -64,7 +65,6 @@ const BuildPixelClassifierView = Backbone.View.extend({
             this._showError('BuildPixelClassifier CLI is not registered.');
             return;
         }
-
         const session = this._session || {};
         const iterations = session.iterations || [];
         const iteration = iterations.length + 1;
@@ -72,11 +72,6 @@ const BuildPixelClassifierView = Backbone.View.extend({
 
         if (!jobDir) {
             this._showError('Output directory is required.');
-            return;
-        }
-
-        if (!session.training_annotation_id) {
-            this._showError('No training annotation found. Set up the session first and paint annotations.');
             return;
         }
 
@@ -88,9 +83,9 @@ const BuildPixelClassifierView = Backbone.View.extend({
             ? (rawToken.token || '') : (rawToken || '');
 
         const params = {
-            item_id: this._itemId,
-            annotation_id: session.training_annotation_id,
-            classes_json: JSON.stringify(session.classes || []),
+            folder_id: this._folderId,
+            positive_annotation_name: session.positive_annotation_name || '',
+            roi_annotation_name: session.roi_annotation_name || '',
             session_name: session.name || 'PixelClassifier',
             iteration,
             model_type: session.model_type || 'trident_linear',
@@ -110,13 +105,10 @@ const BuildPixelClassifierView = Backbone.View.extend({
         }).done((job) => {
             const jobId = (job || {})._id;
 
-            // Stamp skeleton iteration entry into session metadata
-            const updatedIterations = iterations.concat([{
-                num: iteration,
-                job_id: jobId || null
-            }]);
+            // Stamp skeleton iteration into folder session metadata
+            const updatedIterations = iterations.concat([{num: iteration, job_id: jobId || null}]);
             restRequest({
-                url: `item/${this._itemId}/metadata`,
+                url: `folder/${this._folderId}/metadata`,
                 method: 'PUT',
                 contentType: 'application/json',
                 data: JSON.stringify({
@@ -137,14 +129,12 @@ const BuildPixelClassifierView = Backbone.View.extend({
             });
 
             if (jobId) {
-                $('<div class="alert alert-info h-pc-job-link" style="position:fixed;bottom:60px;right:20px;z-index:9999;padding:10px 16px;">'
-                    + `<a href="#job/${jobId}">View training job →</a>`
-                    + '</div>').appendTo('body').delay(8000).fadeOut(400, function () {
+                $(`<div class="alert alert-info" style="position:fixed;bottom:60px;right:20px;z-index:9999;padding:10px 16px;">
+                    <a href="#job/${jobId}">View training job →</a>
+                   </div>`).appendTo('body').delay(8000).fadeOut(400, function () {
                     $(this).remove();
                 });
             }
-
-            this._onSubmit({jobId, iteration, session});
         }).fail((resp) => {
             this.$('.h-pc-build-submit').prop('disabled', false).text('Train');
             const msg = ((resp.responseJSON || {}).message) || resp.statusText || 'Unknown error';
@@ -159,9 +149,9 @@ const BuildPixelClassifierView = Backbone.View.extend({
 
 const showBuildPixelClassifierDialog = function (settings) {
     const view = new BuildPixelClassifierView({
-        itemId: settings.itemId,
+        folderId: settings.folderId,
         session: settings.session || null,
-        onSubmit: settings.onSubmit || function () {},
+        splitCounts: settings.splitCounts || null,
         el: $('<div/>').appendTo('body')
     });
     view.render();

@@ -10,24 +10,25 @@
       .modal-body
         if session
           p.text-muted.small(style='margin-bottom:8px')
-            | Session:
+            | Experiment:
             = ' '
             strong= session.name || '(unnamed)'
-            |  &middot; Model: #{session.model_type || 'trident_linear'}
-            |  &middot; #{session.magnification || 20}× &middot; #{session.patch_size || 512} px
+            |  &middot; Annotation: #{session.positive_annotation_name || '(not set)'}
+            |  &middot; #{session.model_type || 'trident_linear'}
+            |  &middot; #{session.magnification || 20}× / #{session.patch_size || 512} px
+          if session.roi_annotation_name
+            p.text-muted.small(style='margin-bottom:8px')
+              | ROI: #{session.roi_annotation_name}
 
-          .h-pc-class-legend(style='margin-bottom:8px')
-            each cls in (session.classes || [])
-              span.h-pc-build-swatch(
-                style='display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:3px;background:' + cls.fillColor
-              )
-              span.small(style='margin-right:8px')= cls.name
-
-        if patchCounts && Object.keys(patchCounts).length
-          .h-pc-patch-counts(style='margin-bottom:8px')
-            p.small(style='margin-bottom:4px') Annotated patches:
-            each count, name in patchCounts
-              span.label.label-default(style='margin-right:4px')= name + ': ' + count
+        if splitCounts
+          .h-pc-split-summary(style='margin-bottom:12px')
+            span.label.label-primary= 'Train: ' + splitCounts.train + ' slide' + (splitCounts.train !== 1 ? 's' : '')
+            if splitCounts.test > 0
+              = ' '
+              span.label.label-warning= 'Test: ' + splitCounts.test + ' slide' + (splitCounts.test !== 1 ? 's' : '')
+            if splitCounts.val > 0
+              = ' '
+              span.label.label-success= 'Val: ' + splitCounts.val + ' slide' + (splitCounts.val !== 1 ? 's' : '')
 
         .form-group
           label(for='h-pc-job-dir') Output Directory

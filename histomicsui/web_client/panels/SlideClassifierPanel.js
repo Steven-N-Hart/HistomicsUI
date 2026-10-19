@@ -18,7 +18,8 @@ const SlideClassifierPanel = Backbone.View.extend({
         'change .h-sc-split-radio': '_onSplitChange',
         'change .h-sc-label-cb': '_onLabelChange',
         'click .h-sc-run-btn': '_onRun',
-        'click .h-sc-apply-btn': '_onApply'
+        'click .h-sc-apply-btn': '_onApply',
+        'click .h-sc-delete-btn': '_onDelete'
     },
 
     initialize(settings) {
@@ -34,7 +35,7 @@ const SlideClassifierPanel = Backbone.View.extend({
     },
 
     render() {
-        this._renderTemplate();
+        this.$el.hide();
         this._loadData();
         return this;
     },
@@ -84,18 +85,25 @@ const SlideClassifierPanel = Backbone.View.extend({
     },
 
     _loadData() {
+        const nonImageExt = /\.(yaml|yml|json|csv|txt|log|pkl|py|xml|md|sh|html|js|css|ini|cfg|toml|zip|tar|gz)$/i;
         Promise.all([
             restRequest({url: `folder/${this._folderId}`, error: null}),
             restRequest({url: 'item', data: {folderId: this._folderId, limit: 10000}, error: null})
         ]).then(([folder, items]) => {
             this._experiment = ((folder || {}).meta || {})._aiExperiment || null;
             this._allItems = items || [];
+            const hasSlides = this._allItems.some(
+                (item) => !nonImageExt.test(item.name) && !item.name.startsWith('.')
+            );
+            this.$el.toggle(hasSlides);
             this._computeCounts();
             this._loading = false;
-            this._renderTemplate();
+            if (hasSlides) {
+                this._renderTemplate();
+            }
         }).catch(() => {
+            this.$el.hide();
             this._loading = false;
-            this._renderTemplate();
         });
     },
 
@@ -271,6 +279,59 @@ const SlideClassifierPanel = Backbone.View.extend({
             folderId: this._folderId,
             experiment: this._experiment,
             selectedItemIds: this._checkedItemIds.slice()
+        });
+    },
+
+    _onDelete() {
+        events.trigger('h:confirmDialog', {
+            title: 'Delete Experiment',
+            message: 'Delete this classifier experiment? All split assignments, labels, and predictions will be removed from slides in this folder.',
+            submitButton: 'Delete',
+            onSubmit: () => this._doDelete()
+        });
+    },
+
+    _doDelete() {
+        const itemsToClean = this._allItems.filter((item) => {
+            const m = item.meta || {};
+            return m._aiSplit || m._slideClassifierLabels || m._slideClassifierPrediction;
+        });
+
+        const requests = [
+            restRequest({
+                url: `folder/${this._folderId}/metadata?allowNull=true`,
+                method: 'PUT',
+                contentType: 'application/json',
+                data: JSON.stringify({_aiExperiment: null}),
+                error: null
+            }),
+            ...itemsToClean.map((item) => restRequest({
+                url: `item/${item._id}/metadata?allowNull=true`,
+                method: 'PUT',
+                contentType: 'application/json',
+                data: JSON.stringify({_aiSplit: null, _slideClassifierLabels: null, _slideClassifierPrediction: null}),
+                error: null
+            }))
+        ];
+
+        Promise.all(requests).then(() => {
+            this._experiment = null;
+            this._allItems.forEach((item) => {
+                if (item.meta) {
+                    item.meta._aiSplit = null;
+                    item.meta._slideClassifierLabels = null;
+                    item.meta._slideClassifierPrediction = null;
+                }
+            });
+            this._computeCounts();
+            this._renderTemplate();
+        }).catch(() => {
+            events.trigger('g:alert', {
+                icon: 'cancel',
+                text: 'Failed to delete experiment.',
+                type: 'danger',
+                timeout: 3000
+            });
         });
     }
 });
